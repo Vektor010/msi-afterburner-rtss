@@ -1,0 +1,3498 @@
+﻿# ==============================================================================
+# MSI Afterburner & RTSS Automated Installer & Optimizer
+# Enterprise-Grade Architecture & Fast Idempotent Execution
+# ==============================================================================
+
+# --- 1. ФУНКЦИИ ОКРУЖЕНИЯ, ЛОГИРОВАНИЯ И ВЕРИФИКАЦИИ ---
+$script:InstallTimer = [System.Diagnostics.Stopwatch]::StartNew()
+$script:ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
+$script:LogDir = Join-Path $script:ScriptDir "Logs"
+if (-not (Test-Path $script:LogDir)) { New-Item -Path $script:LogDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null }
+$script:LogFile = Join-Path $script:LogDir ("MsiInstaller_" + (Get-Date -Format "yyyy-MM-dd_HH-mm-ss") + ".log")
+
+function Write-InstallerLog {
+    param(
+        [Parameter(Mandatory=$true)][ValidateSet("INFO","OK","WARN","ERROR","DEBUG","STEP")][string]$Level,
+        [Parameter(Mandatory=$true)][string]$Action,
+        [Parameter(Mandatory=$true)][string]$Message,
+        [System.Diagnostics.Stopwatch]$Timer = $null
+    )
+    $ts = Get-Date -Format "HH:mm:ss"
+    $dur = if ($Timer) { " [{0:N2}s]" -f ($Timer.ElapsedMilliseconds / 1000) } else { "" }
+    $logLine = "[$ts] [$Level] [$Action] $Message$dur"
+    
+    $color = switch ($Level) {
+        "STEP"  { "Cyan" }
+        "OK"    { "Green" }
+        "INFO"  { "White" }
+        "WARN"  { "Yellow" }
+        "ERROR" { "Red" }
+        "DEBUG" { "DarkGray" }
+        default { "Gray" }
+    }
+    Write-Host $logLine -ForegroundColor $color
+    try {
+        [System.IO.File]::AppendAllText($script:LogFile, "$logLine`r`n", [System.Text.Encoding]::UTF8)
+    } catch {}
+}
+
+function Show-InstallerProgress {
+    param([int]$Step, [int]$TotalSteps, [string]$Activity)
+    $pct = [math]::Round(($Step / $TotalSteps) * 100)
+    Write-InstallerLog -Level "STEP" -Action ("[{0}/{1}] ({2}%)" -f $Step, $TotalSteps, $pct) -Message $Activity
+}
+
+function Test-AdministratorPrivileges {
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")
+    if (-not $isAdmin) {
+        $realPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { "$script:ScriptDir\new 11.10.26 (moi).ps1" }
+        Write-InstallerLog -Level "WARN" -Action "UAC" -Message "Требуются права Администратора. Перезапуск процесса с повышением прав..."
+        Start-Process PowerShell.exe -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -File `"{0}`"" -f $realPath) -Verb RunAs
+        Exit
+    }
+    Write-InstallerLog -Level "OK" -Action "UAC" -Message "Права Администратора подтверждены."
+}
+
+function Stop-ComponentGraceful {
+    param([string[]]$ProcessNames, [int]$TimeoutMs = 2500)
+    foreach ($pName in $ProcessNames) {
+        $procs = Get-Process -Name $pName -ErrorAction SilentlyContinue
+        foreach ($proc in $procs) {
+            Write-InstallerLog -Level "INFO" -Action "Process" -Message "Отправка запроса на штатное закрытие процесса $pName (PID: $($proc.Id))..."
+            $proc.CloseMainWindow() | Out-Null
+        }
+    }
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
+        $alive = Get-Process -Name $ProcessNames -ErrorAction SilentlyContinue
+        if (-not $alive) {
+            Write-InstallerLog -Level "OK" -Action "Process" -Message "Все процессы успешно остановлены штатно." -Timer $sw
+            return
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    $stillAlive = Get-Process -Name $ProcessNames -ErrorAction SilentlyContinue
+    if ($stillAlive) {
+        Write-InstallerLog -Level "WARN" -Action "Process" -Message "Процессы не ответили на штатное закрытие. Принудительное завершение..."
+        $stillAlive | Stop-Process -Force -ErrorAction SilentlyContinue
+        Write-InstallerLog -Level "OK" -Action "Process" -Message "Процессы принудительно остановлены."
+    }
+}
+
+function Backup-ConfigurationFiles {
+    param([string]$SourceDir, [string]$BackupDir)
+    if (Test-Path $SourceDir) {
+        New-Item -Path $BackupDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+        $cfgFiles = Get-ChildItem -Path $SourceDir -Filter "*.cfg" -ErrorAction SilentlyContinue
+        foreach ($f in $cfgFiles) {
+            Copy-Item -Path $f.FullName -Destination $BackupDir -Force -ErrorAction SilentlyContinue
+        }
+        Write-InstallerLog -Level "OK" -Action "Backup" -Message "Резервная копия ($($cfgFiles.Count) файлов) сохранена в: $BackupDir"
+    }
+}
+
+# --- 2. ИНИЦИАЛИЗАЦИЯ И ПРОВЕРКА ПРАВ ---
+$Host.UI.RawUI.WindowTitle = "MSI Afterburner + RTSS Optimizer [Administrator]"
+$Host.UI.RawUI.BackgroundColor = "Black"
+$Host.PrivateData.ProgressBackgroundColor = "Black"
+$Host.PrivateData.ProgressForegroundColor = "White"
+Clear-Host
+
+$progresspreference = 'silentlycontinue'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+Write-Host "==========================================================" -ForegroundColor DarkCyan
+Write-Host "   Установка и оптимизация MSI Afterburner + RivaTuner    " -ForegroundColor Cyan
+Write-Host "==========================================================" -ForegroundColor DarkCyan
+Write-InstallerLog -Level "INFO" -Action "Init" -Message "Сессия логирования запущена: $script:LogFile"
+
+Show-InstallerProgress -Step 1 -TotalSteps 8 -Activity "Проверка прав администратора и окружения"
+Test-AdministratorPrivileges
+
+# --- 3. ПРОВЕРКА СУЩЕСТВУЮЩИХ КОМПОНЕНТОВ (ИДЕМПОТЕНТНОСТЬ) ---
+Show-InstallerProgress -Step 2 -TotalSteps 8 -Activity "Проверка установленных версий MSI Afterburner и RTSS"
+$MsiDir = "$env:SystemDrive\Program Files (x86)\MSI Afterburner"
+$RtssDir = "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server"
+$MsiExe = "$MsiDir\MSIAfterburner.exe"
+$RtssExe = "$RtssDir\RTSS.exe"
+
+$isMsiInstalled = Test-Path $MsiExe
+$isRtssInstalled = Test-Path $RtssExe
+
+if ($isMsiInstalled -and $isRtssInstalled) {
+    Write-InstallerLog -Level "OK" -Action "Check" -Message "MSI Afterburner и RTSS уже установлены на данном ПК. Пропуск сетевой загрузки и повторной инсталляции."
+} else {
+    Show-InstallerProgress -Step 3 -TotalSteps 8 -Activity "Загрузка и тихая установка компонентов"
+    Write-InstallerLog -Level "INFO" -Action "Download" -Message "Требуется установка. Проверка сетевого подключения..."
+    if (!(Test-Connection -ComputerName "8.8.8.8" -Count 1 -Quiet -ErrorAction SilentlyContinue) -and !([System.Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable())) {
+        Write-InstallerLog -Level "ERROR" -Action "Network" -Message "Сетевое подключение отсутствует. Установка невозможна."
+        Pause
+        exit
+    }
+    
+    $AbZip = "$env:TEMP\msiafterburner467.zip"
+    $AbDir = "$env:TEMP\msiafterburner467"
+    $dlTimer = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        Write-InstallerLog -Level "INFO" -Action "Download" -Message "Скачивание MSI Afterburner 4.6.7 Beta 2 с официального сервера MSI..."
+        Invoke-WebRequest -Uri "https://download.msi.com/uti_exe/vga/MSIAfterburnerSetup467Beta2.zip" -OutFile $AbZip -UseBasicParsing -ErrorAction Stop
+        Expand-Archive -Path $AbZip -DestinationPath $AbDir -Force
+        $WrapperExe = (Get-ChildItem -Path $AbDir -Filter "*.exe" -Recurse | Select-Object -First 1).FullName
+        $asm = [System.Reflection.Assembly]::Load([System.IO.File]::ReadAllBytes($WrapperExe))
+        $rm = New-Object System.Resources.ResourceManager("MSIAfterburnerSetup.Properties.Resources", $asm)
+        $innerBytes = $rm.GetObject("MSIAfterburnerSetupFile")
+        $innerZip = "$AbDir\inner.zip"
+        [System.IO.File]::WriteAllBytes($innerZip, $innerBytes)
+        Expand-Archive -Path $innerZip -DestinationPath "$AbDir\real" -Force
+        $AbSetup = (Get-ChildItem -Path "$AbDir\real" -Filter "*.exe" | Select-Object -First 1).FullName
+        Write-InstallerLog -Level "OK" -Action "Download" -Message "Дистрибутив успешно получен и распакован." -Timer $dlTimer
+    } catch {
+        Write-InstallerLog -Level "WARN" -Action "Download" -Message "Основной сервер MSI недоступен ($($_.Exception.Message)). Загрузка резервного релиза..."
+        $AbSetup = "$env:TEMP\msiafterburner.exe"
+        Invoke-WebRequest -Uri "https://github.com/FR33THYFR33THY/Ultimate/releases/download/Files/msiafterburner.exe" -OutFile $AbSetup -UseBasicParsing
+        Write-InstallerLog -Level "OK" -Action "Download" -Message "Резервный дистрибутив загружен." -Timer $dlTimer
+    }
+
+    if (!$AbSetup -or !(Test-Path $AbSetup)) {
+        Write-InstallerLog -Level "ERROR" -Action "Install" -Message "Не удалось получить установщик MSI Afterburner!"
+        Pause
+        exit
+    }
+
+    Stop-ComponentGraceful -ProcessNames @("MSIAfterburner", "RTSS")
+
+    Write-InstallerLog -Level "INFO" -Action "Install" -Message "Тихая установка MSI Afterburner и RivaTuner с блокировкой сетевых загрузок..."
+    $ifeo = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+    $redistList = @("dxwebsetup.exe", "VCRedistWebSetup.exe", "vc_redist.x86.exe", "vc_redist.x64.exe")
+    foreach ($exe in $redistList) {
+        New-Item -Path "$ifeo\$exe" -Force | Out-Null
+        Set-ItemProperty -Path "$ifeo\$exe" -Name "Debugger" -Value "rundll32.exe"
+    }
+    try {
+        Start-Process -FilePath $AbSetup -ArgumentList "/S" -WindowStyle Hidden -Wait
+        $rtssSetup = "$MsiDir\Redist\RTSSSetup.exe"
+        if (Test-Path $rtssSetup) {
+            Start-Process -FilePath $rtssSetup -ArgumentList "/S" -WindowStyle Hidden -Wait
+        }
+    } finally {
+        foreach ($exe in $redistList) {
+            Remove-Item -Path "$ifeo\$exe" -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Write-InstallerLog -Level "OK" -Action "Install" -Message "Установка программных пакетов завершена."
+    Remove-Item -Path $AbZip -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $AbDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "$env:TEMP\msiafterburner.exe" -Force -ErrorAction SilentlyContinue
+}
+
+# --- 4. СОХРАНЕНИЕ БЭКАПОВ ПЕРЕД НАСТРОЙКОЙ ---
+Show-InstallerProgress -Step 4 -TotalSteps 8 -Activity "Создание резервных копий текущих конфигураций"
+Stop-ComponentGraceful -ProcessNames @("MSIAfterburner", "RTSS")
+$backupTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$msiBackupDir = Join-Path $MsiDir "Profiles\Backup_$backupTimestamp"
+$rtssBackupDir = Join-Path $RtssDir "Profiles\Backup_$backupTimestamp"
+Backup-ConfigurationFiles -SourceDir "$MsiDir\Profiles" -BackupDir $msiBackupDir
+Backup-ConfigurationFiles -SourceDir "$RtssDir\Profiles" -BackupDir $rtssBackupDir
+
+Show-InstallerProgress -Step 5 -TotalSteps 8 -Activity "Применение конфигураций MSI Afterburner (SingleTrayIconMode, Hotkeys)"
+New-Item -Path "$MsiDir\Profiles" -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
+
+# 1. Настройка мониторинга msiafterburner.cfg (Классический детальный стиль с ядрами CPU0-CPU7)
+$MsiAfterBurnerCfg = @"
+[Settings]
+Language=RUS
+Views=
+LastUpdateCheck=66ACCB2Fh
+UpdateCheckingPeriod=0
+LowLevelInterface=1
+MMIOUserMode=1
+HAL=1
+Driver=1
+Skin=MSIGaming.usf
+StartWithWindows=1
+StartMinimized=1
+HwPollPeriod=1000
+LockProfiles=0
+ShowHints=1
+ShowTooltips=1
+LCDFont=font4x6.dat
+RememberSettings=1
+FirstRun=0
+FirstUserDefineClick=1
+FirstServerRun=0
+EnableServer=1
+CurrentGpu=0
+Sync=1
+Link=1
+LinkThermal=1
+FanSync=1
+CurrentFan=0
+ShowOSDTime=0
+CaptureOSD=0
+Profile1Hotkey=00040070h
+Profile2Hotkey=00040071h
+Profile3Hotkey=00000000h
+Profile4Hotkey=00000000h
+Profile5Hotkey=00000000h
+OSDToggleHotkey=00040031h
+OSDOnHotkey=00000000h
+OSDOffHotkey=00000000h
+OSDServerBlockHotkey=00000000h
+LimiterToggleHotkey=00000000h
+LimiterOnHotkey=00000000h
+LimiterOffHotkey=00000000h
+ScreenCaptureHotkey=00000000h
+VideoCaptureHotkey=00000000h
+VideoPrerecordHotkey=00000000h
+PTTHotkey=00000000h
+PTT2Hotkey=00000000h
+BeginRecordHotkey=00000000h
+EndRecordHotkey=00000000h
+BeginLoggingHotkey=00000000h
+EndLoggingHotkey=00000000h
+ClearHistoryHotkey=00000000h
+BenchmarkPath=%ABDir%\Benchmark.txt
+AppendBenchmark=1
+ScreenCaptureFormat=bmp
+ScreenCaptureFolder=
+ScreenCaptureQuality=100
+VideoCaptureFolder=
+VideoCaptureFormat=MJPG
+VideoCaptureQuality=85
+VideoCaptureFramerate=30
+VideoCaptureFramesize=00000002h
+VideoCaptureThreads=FFFFFFFFh
+AudioCaptureFlags=00000003h
+VideoCaptureFlagsEx=00000000h
+AudioCaptureFlags2=00000002h
+VideoCaptureContainer=avi
+VideoPrerecordSizeLimit=256
+VideoPrerecordTimeLimit=600
+AutoPrerecord=0
+WindowX=1783
+WindowY=865
+ProfileContents=1
+Profile2D=-1
+Profile3D=-1
+SwAutoFanControl=1
+SwAutoFanControlFlags=00000004h
+SwAutoFanControlPeriod=5000
+SwAutoFanControlCurve=0000010006000000000000000000000000000000000020420000000000002042000020420000A0420000A0420000B4420000B4420000C8420000C84200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+SwAutoFanControlCurve2=0000010004000000000000000000F0410000204200004842000048420000A0420000A0420000B4420000C8420000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+RestoreAfterSuspendedMode=1
+PauseMonitoring=0
+ShowPerformanceProfilerStatus=0
+ShowPerformanceProfilerPanel=0
+AttachMonitoringWindow=1
+HideMonitoring=0
+MonitoringWindowOnTop=1
+LogPath=%ABDir%\HardwareMonitoring.hml
+EnableLog=0
+RecreateLog=0
+LogLimit=10
+OSDLayout=1
+UnlockVoltageControl=1
+UnlockVoltageMonitoring=1
+OEM=0
+ForceConstantVoltage=0
+SingleTrayIconMode=1
+Fahrenheit=0
+Time24=1
+LCDGraph=0
+Sources=+Core clock,+GPU usage,+GPU temperature,+FB usage,+VID usage,+BUS usage,+Memory usage,-Memory usage \ process,+Memory clock,-Power percent,+Power,+GPU voltage,-Fan speed,+Fan speed 2,+Fan tachometer,+Fan tachometer 2,+Temp limit,+Power limit,+Voltage limit,+No load limit,+CPU1 clock,+CPU1 usage,+CPU1 temperature,+CPU2 clock,+CPU2 usage,+CPU2 temperature,+CPU3 clock,+CPU3 usage,+CPU3 temperature,+CPU4 clock,+CPU4 usage,+CPU4 temperature,+CPU5 clock,+CPU5 usage,+CPU5 temperature,+CPU6 clock,+CPU6 usage,+CPU6 temperature,+CPU7 clock,+CPU7 usage,+CPU7 temperature,+CPU8 clock,+CPU8 usage,+CPU8 temperature,+CPU9 clock,+CPU9 usage,+CPU9 temperature,+CPU10 clock,+CPU10 usage,+CPU10 temperature,+CPU11 clock,+CPU11 usage,+CPU11 temperature,+CPU12 clock,+CPU12 usage,+CPU12 temperature,+CPU13 clock,+CPU13 usage,+CPU13 temperature,+CPU14 clock,+CPU14 usage,+CPU14 temperature,+CPU15 clock,+CPU15 usage,+CPU15 temperature,+CPU16 clock,+CPU16 usage,+CPU16 temperature,+CPU clock,+CPU usage,+CPU temperature,+CPU power,+RAM usage,-RAM usage \ process,+Commit charge,+Framerate,+Frametime,-Framerate Min,-Framerate Avg,-Framerate Max,+Framerate 1% Low,+Framerate 0.1% Low,+CPU1 power,+CPU2 power,+CPU3 power,+CPU4 power,+CPU5 power,+CPU6 power,+CPU7 power,+CPU8 power,+CPU9 power,+CPU10 power,+CPU11 power,+CPU12 power,+CPU13 power,+CPU14 power,+CPU15 power,+CPU16 power
+LayeredWindowMode=1
+LayeredWindowAlpha=255
+ScaleFactor=100
+VFWindowX=-7
+VFWindowY=226
+VFWindowW=1800
+VFWindowH=1183
+VFWindowOnTop=1
+[ATIADLHAL]
+UnofficialOverclockingMode=0
+UnofficialOverclockingDrvReset=1
+UnifiedActivityMonitoring=0
+EraseStartupSettings=0
+[Source GPU temperature]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=GPU temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source GPU usage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=GPU load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source Core clock]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=2500
+MinLimit=0
+Group=
+Name=GPU clock
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source Memory clock]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=7500
+MinLimit=0
+Group=
+Name=GPU mem clock
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source Power]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=300.0
+MinLimit=0.0
+Group=
+Name=GPU power
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source GPU voltage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=2.000
+MinLimit=0.000
+Group=
+Name=GPU volt
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source Fan speed]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=GPU fan
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU1 temperature]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU0
+Name=CPU1 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU2 temperature]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU2 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU3 temperature]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU1
+Name=CPU3 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU4 temperature]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU4 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU5 temperature]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU2
+Name=CPU5 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU6 temperature]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU6 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU7 temperature]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU3
+Name=CPU7 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU8 temperature]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU8 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU9 temperature]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU4
+Name=CPU9 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU10 temperature]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU10 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU11 temperature]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU5
+Name=CPU11 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU12 temperature]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU12 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU13 temperature]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU6
+Name=CPU13 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU14 temperature]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU14 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU15 temperature]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU7
+Name=CPU15 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU16 temperature]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU16 temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU temperature]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU temp
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU1 usage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU0
+Name=CPU1 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU2 usage]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU2 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU3 usage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU1
+Name=CPU3 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU4 usage]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU4 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU5 usage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU2
+Name=CPU5 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU6 usage]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU6 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU7 usage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU3
+Name=CPU7 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU8 usage]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU8 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU9 usage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU4
+Name=CPU9 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU10 usage]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU10 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU11 usage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU5
+Name=CPU11 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU12 usage]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU12 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU13 usage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU6
+Name=CPU13 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU14 usage]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU14 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU15 usage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=CPU7
+Name=CPU15 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU16 usage]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU16 load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU usage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=100
+MinLimit=0
+Group=
+Name=CPU load
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU1 clock]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=CPU0
+Name=CPU1 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU2 clock]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=
+Name=CPU2 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU3 clock]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=CPU1
+Name=CPU3 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU4 clock]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=
+Name=CPU4 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU5 clock]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=CPU2
+Name=CPU5 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU6 clock]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=
+Name=CPU6 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU7 clock]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=CPU3
+Name=CPU7 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU8 clock]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=
+Name=CPU8 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU9 clock]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=CPU4
+Name=CPU9 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU10 clock]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=
+Name=CPU10 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU11 clock]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=CPU5
+Name=CPU11 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU12 clock]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=
+Name=CPU12 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU13 clock]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=CPU6
+Name=CPU13 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU14 clock]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=
+Name=CPU14 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU15 clock]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=CPU7
+Name=CPU15 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU16 clock]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=
+Name=CPU16 MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU clock]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=5000
+MinLimit=0
+Group=
+Name=CPU MHz
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU power]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=200.0
+MinLimit=0.0
+Group=
+Name=CPU power
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source RAM usage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=16384
+MinLimit=0
+Group=
+Name=RAM
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source Framerate]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=200
+MinLimit=0
+Group=
+Name=FPS
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source Frametime]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=50.0
+MinLimit=0.0
+Group=
+Name=Frametime
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=1
+GraphColor=00FF00h
+Formula=
+[Source Memory usage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=8192
+MinLimit=0
+Group=
+Name=VRAM
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source Framerate 0.1% Low]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=200
+MinLimit=0
+Group=Low 0.1%
+Name=Low 0.1%
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source Framerate 1% Low]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+MaxLimit=200
+MinLimit=0
+Group=Low 1%
+Name=Low 1%
+TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+"@
+Set-Content -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\MSIAfterburner.cfg" -Value $MsiAfterBurnerCfg -Force
+
+# --- НАЧАЛО БЛОКА РАЗГОНА (RTX 5080) ---
+
+# 1. Записываем файл настроек видеокарты (Частоты, Курва, Лимиты)
+$existingGpuCfg = Get-ChildItem -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\VEN_*.cfg" -ErrorAction SilentlyContinue | Select-Object -First 1
+$MyGpuFileName = if ($existingGpuCfg) { $existingGpuCfg.Name } else { "VEN_10DE&DEV_2C02&SUBSYS_176219DA&REV_A1&BUS_1&DEV_0&FN_0.cfg" }
+$MyGpuProfileContent = @"
+[Defaults]
+Format=2
+[Settings]
+CaptureDefaults=0
+[Startup]
+Format=2
+CoreVoltageBoost=100
+PowerLimit=115
+CoreClkBoost=-502296
+VFCurve=000002007F000000000000000000E14300009643000000000000E64300009643000000000080E84300009643000000000000EB4300009643000000000080ED4300009643000000000080F24300009643000000000000F54300009643000000000080F74300009643000000000000FA4300009643000000000000FF43000096430000000000C00044000096430000000000000244000096430000000000400344000096430000000000C00544000096430000000000000744000096430000000000400844000096430000000000800944000096430000000000000C44000096430000000000400D44000096430000000000800E44000096430000000000C00F44000096430000000000401244000096430000000000801344000096430000000000C01444000096430000000000001644000096430000000000801844000096430000000000C01944000096430000000000001B44000096430000000000401C44000096430000000000C01E44000096430000000000002044000096430000000000402144000096430000000000802244000096430000000000002544000096430000000000402644000096430000000000802744000096430000000000C02844000096430000000000402B44000096430000000000802C44000096430000000000C02D44000096430000000000002F44000096430000000000803144000096430000000000C0324400009643000000000000344400009643000000000040354400809D430000000000C037440080E4430000000000003944000016440000000000403A4400C037440000000000803B4400405B440000000000003E4400007D440000000000403F440060904400000000008040440020A2440000000000C041440000B344000000000040444400E0C444000000000080454400C0D5440000000000C046440040EB4400000000000048440020F94400808B4300804A440000054500808B4300C04B4400B0094500808B4300004D4400900B4500808B4300404E4400700D4500808B4300C0504400600E4500808B43000052440040104500808B43004053440020124500808B43008054440000144500808B430000574400E0154500808B430040584400D0164500808B430080594400B0184500808B4300C05A4400901A4500808B4300405D4400701C4500808B4300805E4400601D4500808B4300C05F4400401F4500808B43000061440020214500808B43008063440010224500808B4300C0644400F0234500808B430000664400E0244500808B430040674400C0264500808B4300C0694400A0284500808B4300006B440090294500808B4300406C4400802A4500808B4300806D4400602C4500808B430000704400502D4500808B430040714400302F4500808B43008072440020304500808B4300C0734400D0304500808D430040764400807345000044C40080774400807345000044C400C0784400807345000044C400007A4400807345000044C400807C4400807345000044C400C07D4400807345000044C400007F4400807345000044C40020804400807345000044C40060814400807345000044C40000824400807345000044C400A0824400807345000044C40040834400807345000044C40080844400807345000044C40020854400807345000044C400C0854400807345000044C40060864400807345000044C400A0874400807345000044C40040884400807345000044C400E0884400807345000044C40080894400807345000044C400C08A4400807345000044C400608B4400807345000044C400008C4400807345000044C400A08C4400807345000044C400E08D4400807345000044C400808E4400807345000044C400208F4400807345000044C400C08F4400807345000044C40000914400807345000044C400A0914400807345000044C40040924400807345000044C400E0924400807345000044C40020944400807345000044C400C0944400807345000044C40060954400807345000044C40000964400807345000044C40040974400807345000044C400E0974400807345000044C40080984400807345000044C40020994400807345000044C400609A4400807345000044C400009B4400807345000044C40000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+MemClkBoost=2500000
+FanMode=1
+FanSpeed=30
+FanMode2=
+FanSpeed2=
+[Profile1]
+Format=2
+CoreVoltageBoost=100
+PowerLimit=115
+CoreClkBoost=-502296
+VFCurve=000002007F000000000000000000E14300009643000000000000E64300009643000000000080E84300009643000000000000EB4300009643000000000080ED4300009643000000000080F24300009643000000000000F54300009643000000000080F74300009643000000000000FA4300009643000000000000FF43000096430000000000C00044000096430000000000000244000096430000000000400344000096430000000000C00544000096430000000000000744000096430000000000400844000096430000000000800944000096430000000000000C44000096430000000000400D44000096430000000000800E44000096430000000000C00F44000096430000000000401244000096430000000000801344000096430000000000C01444000096430000000000001644000096430000000000801844000096430000000000C01944000096430000000000001B44000096430000000000401C44000096430000000000C01E44000096430000000000002044000096430000000000402144000096430000000000802244000096430000000000002544000096430000000000402644000096430000000000802744000096430000000000C02844000096430000000000402B44000096430000000000802C44000096430000000000C02D44000096430000000000002F44000096430000000000803144000096430000000000C0324400009643000000000000344400009643000000000040354400809D430000000000C037440080E4430000000000003944000016440000000000403A4400C037440000000000803B4400405B440000000000003E4400007D440000000000403F440060904400000000008040440020A2440000000000C041440000B344000000000040444400E0C444000000000080454400C0D5440000000000C046440040EB4400000000000048440020F94400808B4300804A440000054500808B4300C04B4400C0084500808B4300004D4400A00A4500808B4300404E4400800C4500808B4300C0504400600E4500808B43000052440040104500808B43004053440020124500808B43008054440000144500808B430000574400F0144500808B430040584400D0164500808B430080594400B0184500808B4300C05A4400901A4500808B4300405D4400801B4500808B4300805E4400601D4500808B4300C05F4400401F4500808B43000061440020214500808B43008063440010224500808B4300C0644400F0234500808B430000664400D0254500808B430040674400C0264500808B4300C0694400A0284500808B4300006B440090294500808B4300406C4400702B4500808B4300806D4400602C4500808B430000704400402E4500808B430040714400302F4500808B43008072440020304500808B4300C0734400C0314500808D430040764400707445000044C40080774400707445000044C400C0784400707445000044C400007A4400707445000044C400807C4400707445000044C400C07D4400707445000044C400007F4400707445000044C40020804400707445000044C40060814400707445000044C40000824400707445000044C400A0824400707445000044C40040834400707445000044C40080844400707445000044C40020854400707445000044C400C0854400707445000044C40060864400707445000044C400A0874400707445000044C40040884400707445000044C400E0884400707445000044C40080894400707445000044C400C08A4400707445000044C400608B4400707445000044C400008C4400707445000044C400A08C4400707445000044C400E08D4400707445000044C400808E4400707445000044C400208F4400707445000044C400C08F4400707445000044C40000914400707445000044C400A0914400707445000044C40040924400707445000044C400E0924400707445000044C40020944400707445000044C400C0944400707445000044C40060954400707445000044C40000964400707445000044C40040974400707445000044C400E0974400707445000044C40080984400707445000044C40020994400707445000044C400609A4400707445000044C400009B4400707445000044C40000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+MemClkBoost=2500000
+FanMode=1
+FanSpeed=30
+FanMode2=
+FanSpeed2=
+[Profile2]
+Format=2
+CoreVoltageBoost=100
+PowerLimit=115
+CoreClkBoost=292000
+VFCurve=000002007F000000000000000000E14300009643000000000000E64300009643000000000080E84300009643000000000000EB4300009643000000000080ED4300009643000000000080F24300009643000000000000F54300009643000000000080F74300009643000000000000FA4300009643000000000000FF43000096430000000000C00044000096430000000000000244000096430000000000400344000096430000000000C00544000096430000000000000744000096430000000000400844000096430000000000800944000096430000000000000C44000096430000000000400D44000096430000000000800E44000096430000000000C00F44000096430000000000401244000096430000000000801344000096430000000000C01444000096430000000000001644000096430000000000801844000096430000000000C01944000096430000000000001B44000096430000000000401C44000096430000000000C01E44000096430000000000002044000096430000000000402144000096430000000000802244000096430000000000002544000096430000000000402644000096430000000000802744000096430000000000C02844000096430000000000402B44000096430000000000802C44000096430000000000C02D44000096430000000000002F44000096430000000000803144000096430000000000C0324400009643000000000000344400009643000000000040354400809D430000000000C037440080E4430000000000003944000016440000000000403A4400C037440000000000803B4400405B440000000000003E4400007D440000000000403F440060904400000000008040440020A2440000000000C041440000B344000000000040444400E0C444000000000080454400C0D5440000000000C046440020ED4400000000000048440060F9440000924300804A44002005450000924300C04B4400D009450000924300004D4400B00B450000924300404E4400900D450000924300C0504400800E45000092430000524400601045000092430040534400401245000092430080544400201445000092430000574400001645000092430040584400F01645000092430080594400D018450000924300C05A4400B01A450000924300405D4400901C450000924300805E4400801D450000924300C05F4400601F450000924300006144004021450000924300806344003022450000924300C0644400102445000092430000664400002545000092430040674400E026450000924300C0694400C028450000924300006B4400B029450000924300406C4400A02A450000924300806D4400802C45000092430000704400702D45000092430040714400502F450000924300807244004030450000924300C07344003031450000924300407644007043450000000000807744007043450000000000C07844007043450000000000007A44007043450000000000807C44007043450000000000C07D44007043450000000000007F44007043450000000000208044007043450000000000608144007043450000000000008244007043450000000000A08244007043450000000000408344007043450000000000808444007043450000000000208544007043450000000000C08544007043450000000000608644007043450000000000A08744007043450000000000408844007043450000000000E08844007043450000000000808944006044450000000000C08A44005045450000000000608B4400D045450000000000008C44004046450000000000A08C44003047450000000000E08D4400B047450000000000808E4400A048450000000000208F44001049450000000000C08F4400904945000000000000914400804A450000000000A0914400F04A45000000000040924400704B450000000000E0924400604C45000000000020944400D04C450000000000C0944400504D45000000000060954400C04D45000000000000964400B04E45000000000040974400304F450000000000E0974400A04F450000000000809844002050450000000000209944009050450000000000609A44001051450000000000009B4400805145000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+MemClkBoost=2500000
+FanMode=1
+FanSpeed=30
+FanMode2=
+FanSpeed2=
+[Profile3]
+Format=2
+CoreVoltageBoost=
+PowerLimit=
+CoreClkBoost=
+VFCurve=
+MemClkBoost=
+FanMode=
+FanSpeed=
+FanMode2=
+FanSpeed2=
+"@
+Set-Content -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\$MyGpuFileName" -Value $MyGpuProfileContent -Force
+
+# 2. Активируем кнопки "Профиль 1" и "Профиль 2" (без этого они будут серыми)
+$ProfileSlotContent = @"
+[Settings]
+ProfileContents=1
+"@
+Set-Content -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\Profile1.cfg" -Value $ProfileSlotContent -Force
+Set-Content -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\Profile2.cfg" -Value $ProfileSlotContent -Force
+
+# --- КОНЕЦ БЛОКА ВНЕДРЕНИЯ РАЗГОНА ---
+
+# ---------- 3. НАСТРОЙКИ RTSS (RIVATUNER) - РУССКИЙ ЯЗЫК, OSD ВЫКЛ., ТЕНЬ ВКЛ., MEDIUM И Т.Д. ----------
+Show-InstallerProgress -Step 6 -TotalSteps 8 -Activity "Применение конфигураций RTSS (EnableOSD, HotkeyHandler)"
+New-Item -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server" -Name "Profiles" -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
+
+# 3.1. Файл Config (кэш хуков)
+$Config = @"
+[FnOffsetCache64]
+OS=6.2 Build 9200
+DDRAW.DLL=0009A000 DBDAF4DF 01
+IDirectDrawSurface7::Flip=0002D5F0
+D3D9.DLL=001B3298 8E1F38C0 01
+IDirect3DDevice9::Present=00061C40
+IDirect3DDevice9::Release=00013810
+IDirect3DDevice9::Reset=000E0E70
+IDirect3DSwapChain9::Present=000818C0
+IDirect3DDevice9Ex::PresentEx=0001C6F0
+IDirect3DDevice9Ex::ResetEx=000284F0
+DXGI.DLL=0013F260 E47E62D7 01
+IDXGISwapChain::Present=0000D9F0
+IDXGISwapChain::ResizeBuffers=00039D40
+IDXGISwapChain::Release=00034030
+IDXGISwapChain1::Present1=0000DE90
+IDXGIFactory::CreateSwapChain=00032180
+IDXGIFactory2::CreateSwapChainForHwnd=000309E0
+IDXGIFactory2::CreateSwapChainForCoreWindow=00091720
+kernel32.dll=000CC288 3B3A2518 01
+LoadLibraryA=00042CD0
+LoadLibraryW=0003F710
+Version=0000000A
+D3D12.DLL=0001C9E0 E3291474
+ID3D12CommandQueue::ExecuteCommandLists=00009470
+IDXGISwapChain3::ResizeBuffers1=0009B480
+IDXGISwapChain::SetFullscreenState=0003A530
+D3D12Core.DLL=00358D50 51F39C26 01
+IDXGISwapChain1::m_pCommandQueue=00000138
+[FnOffsetCache]
+OS=6.2 Build 9200
+DDRAW.DLL=00083C00 4E70C42F 01
+IDirectDrawSurface7::Flip=00037C50
+D3D8.DLL=000B4000 3110F6B8 01
+IDirect3DDevice8::Present=0002A1E0
+IDirect3DDevice8::Release=00029800
+IDirect3DDevice8::Reset=00029DC0
+D3D9.DLL=00176CB8 34C44A39 01
+IDirect3DDevice9::Present=000E2020
+IDirect3DDevice9::Release=000659E0
+IDirect3DDevice9::Reset=000E2420
+IDirect3DSwapChain9::Present=00043E30
+IDirect3DDevice9Ex::PresentEx=000E20B0
+IDirect3DDevice9Ex::ResetEx=000E2520
+DXGI.DLL=00106128 C1FF6A7F 01
+IDXGISwapChain::Present=000B2050
+IDXGISwapChain::ResizeBuffers=0002ABC0
+IDXGISwapChain::Release=0004F5C0
+IDXGISwapChain1::Present1=0004AA10
+IDXGIFactory::CreateSwapChain=000A8F40
+IDXGIFactory2::CreateSwapChainForHwnd=000A9610
+IDXGIFactory2::CreateSwapChainForCoreWindow=000A9490
+kernel32.dll=000A6D48 A5BAA890 01
+LoadLibraryA=00031C20
+LoadLibraryW=0001D820
+Version=0000000A
+D3D12.DLL=000144C0 DFA0F1A2
+ID3D12CommandQueue::ExecuteCommandLists=00084FA0
+IDXGISwapChain3::ResizeBuffers1=000B36B0
+IDXGISwapChain::SetFullscreenState=0002C6B0
+D3D12Core.DLL=002C8E00 D373841C 01
+IDXGISwapChain1::m_pCommandQueue=000000B8
+[Settings]
+LastUpdateCheck=666E98C1h
+Skin=default.usf
+WindowX=1918
+WindowY=653
+FirstRun=0
+StartMinimized=1
+StartWithWindows=0
+ShowTooltips=0
+EnableEncoderServer=1
+Enable64Bit=1
+Use64BitEncoderServer=1
+HidePreCreatedProfiles=1
+UpdateCheckingPeriod=0
+Language=RUS
+LayeredWindowMode=0
+LayeredWindowAlpha=255
+ScaleFactor=100
+[Shared]
+Flags=00000004
+[Plugins]
+OverlayEditor.dll=0
+HotkeyHandler.dll=1
+"@
+Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\Profiles\Config" -Value $Config -Force
+
+# 3.2. Файл Global (главные настройки OSD) – исправленный под картинку
+$Global = @"
+[OSD]
+EnableOSD=0
+EnableBgnd=1
+EnableFill=0
+EnableStat=0
+BaseColor=00FF8000
+BgndColor=00000000
+FillColor=80000000
+PositionX=1
+PositionY=550
+ZoomRatio=2
+CoordinateSpace=0
+Shadow=1
+EnableFrameColorBar=0
+FrameColorBarMode=0
+RefreshPeriod=500
+IntegerFramerate=1
+MaximumFrametime=0
+EnableFrametimeHistory=0
+FrametimeHistoryWidth=-32
+FrametimeHistoryHeight=-4
+FrametimeHistoryStyle=0
+ScaleToFit=0
+[Statistics]
+FramerateAveragingInterval=1000
+PeakFramerateCalc=0
+PercentileCalc=0
+FrametimeCalc=0
+PercentileBuffer=0
+[Framerate]
+Limit=0
+LimitDenominator=1
+LimitTime=0
+LimitTimeDenominator=1
+SyncDisplay=0
+SyncScanline0=0
+SyncScanline1=0
+SyncPeriods=0
+SyncLimiter=0
+PassiveWait=1
+ReflexSleep=0
+ReflexSetLatencyMarker=1
+[Hooking]
+EnableHooking=1
+EnableFloatingInjectionAddress=0
+EnableDynamicOffsetDetection=0
+HookLoadLibrary=0
+HookDirectDraw=0
+HookDirect3D8=1
+HookDirect3D9=1
+HookDirect3DSwapChain9Present=1
+HookDXGI=1
+HookDirect3D12=1
+HookOpenGL=1
+HookVulkan=1
+InjectionDelay=15000
+UseDetours=0
+[Font]
+Height=-9
+Weight=400
+Face=Unispace
+Load=
+[RendererDirect3D8]
+Implementation=2
+[RendererDirect3D9]
+Implementation=2
+[RendererDirect3D10]
+Implementation=2
+[RendererDirect3D11]
+Implementation=2
+[RendererDirect3D12]
+Implementation=2
+[RendererOpenGL]
+Implementation=2
+[RendererVulkan]
+Implementation=2
+[Info]
+Timestamp=04-06-2026, 17:56:18
+"@
+Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\Profiles\Global" -Value $Global -Force
+
+# Исключения RTSS (MTA/GTA SA, CS2 — отключение хука)
+$RtssNoHook = @"
+[Hooking]
+EnableHooking=0
+"@
+foreach ($Excl in @("gta_sa.exe.cfg", "proxy_sa.exe.cfg", "Multi Theft Auto.exe.cfg", "CS2.exe.cfg", "Yurigram.exe.cfg", "Telegram.exe.cfg", "destiny2.exe.cfg", "VALORANT-Win64-Shipping.exe.cfg", "League of Legends.exe.cfg", "bf6.exe.cfg", "BF2042.exe.cfg", "FC25.exe.cfg", "FC26.exe.cfg", "r5apex.exe.cfg", "FortniteClient-Win64-Shipping.exe.cfg", "RustClient.exe.cfg", "EscapeFromTarkov.exe.cfg", "RainbowSix.exe.cfg", "RainbowSix_BE.exe.cfg", "start_protected_game.exe.cfg")) {
+    Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\Profiles\$Excl" -Value $RtssNoHook -Encoding Ascii -Force
+}
+
+# папки клиентских плагинов RTSS: новые версии - Plugins64\Client, старые - Plugins\Client.
+# без этого блока файлы ниже НЕ ЗАПИСЫВАЛИСЬ (Set-Content не создаёт папки) - оверлей ломался
+$RtssRoot = "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server"
+$RtssClient = "$RtssRoot\Plugins64\Client"
+if (!(Test-Path $RtssClient)) { $RtssClient = "$RtssRoot\Plugins\Client" }
+New-Item -Path $RtssClient -ItemType Directory -Force | Out-Null
+New-Item -Path "$RtssClient\Overlays" -ItemType Directory -Force | Out-Null
+New-Item -Path "$RtssRoot\ProfileTemplates" -ItemType Directory -Force | Out-Null
+
+# 3.3. Файл OverlayEditor.cfg (используем fr33thy.ovl)
+$OverlayEditorCfg = @"
+[Settings]
+Layout=fr33thy.ovl
+"@
+Set-Content -Path "$RtssClient\OverlayEditor.cfg" -Value $OverlayEditorCfg -Force
+
+# 3.4. Файл HotkeyHandler.cfg (горячие клавиши)
+$HotkeyHandlerCfg = @"
+[Settings]
+OSDOnHotkey=00000000
+OSDOffHotkey=00000000
+OSDToggleHotkey=00040031
+LimiterOnHotkey=00000000
+LimiterOffHotkey=00000000
+LimiterToggleHotkey=00000000
+ScreenCaptureHotkey=00000000
+VideoCaptureHotkey=00000000
+PTTHotkey=00000000
+PTT2Hotkey=00000000
+VideoPrerecordHotkey=00000000
+BenchmarkBeginHotkey=0000007A
+BenchmarkEndHotkey=0000007B
+PPM1Hotkey=00000000
+PPM2Hotkey=00000000
+PPM3Hotkey=00000000
+PPM4Hotkey=00000000
+OVM1Hotkey=00000000
+OVM2Hotkey=00000000
+OVM3Hotkey=00000000
+OVM4Hotkey=00000000
+ScreenCaptureFormat=png
+ScreenCaptureQuality=100
+ScreenCaptureFolder=C:\
+CaptureOSD=0
+VideoCaptureContainer=mkv
+VideoCaptureFormat=NV12
+VideoCaptureQuality=100
+VideoCaptureFolder=C:\
+VideoCaptureFramesize=00000001
+VideoCaptureFramerate=60
+AudioCaptureFlags=00000001
+AudioCaptureFlags2=00000000
+VideoCaptureFlagsEx=00000000
+PrerecordSizeLimit=256
+PrerecordTimeLimit=600
+AutoPrerecord=0
+BenchmarkPath=C:\Benckmark.txt
+AppendBenchmark=1
+PPM1Desc=
+PPM1Profile=
+PPM1Property=
+PPM1Type=0
+PPM1Value=0
+PPM2Desc=
+PPM2Profile=
+PPM2Property=
+PPM2Type=0
+PPM2Value=0
+PPM3Desc=
+PPM3Profile=
+PPM3Property=
+PPM3Type=0
+PPM3Value=0
+PPM4Desc=
+PPM4Profile=
+PPM4Property=
+PPM4Type=0
+PPM4Value=0
+OVM1Desc=
+OVM1Message=
+OVM1Layer=
+OVM1Params=
+OVM2Desc=
+OVM2Message=
+OVM2Layer=
+OVM2Params=
+OVM3Desc=
+OVM3Message=
+OVM3Layer=
+OVM3Params=
+OVM4Desc=
+OVM4Message=
+OVM4Layer=
+OVM4Params=
+"@
+Set-Content -Path "$RtssClient\HotkeyHandler.cfg" -Value $HotkeyHandlerCfg -Force
+
+
+# 3.5. Оверлей fr33thy.ovl для RivaTuner Statistics Server (актуальный макет)
+$fr33thyovl = @"
+[Master]
+Implementation=2
+FontFace=Unispace
+FontHeight=-9
+FontWeight=400
+ZoomRatio=4
+[Settings]
+Name=
+EnvVars=
+RefreshPeriod=1000
+LockUserSettings=0
+EmbeddedImage=
+PingAddr=
+[General]
+Sources=66
+Tables=0
+Layers=69
+[Source0]
+Name=RAM usage
+Units=MB
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000091
+Gpu=00000000
+SrcName=
+[Source1]
+Name=Memory usage
+Units=MB
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000031
+Gpu=00000000
+SrcName=
+[Source2]
+Name=Memory clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000022
+Gpu=00000000
+SrcName=
+[Source3]
+Name=CPU1 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=00000000
+SrcName=
+[Source4]
+Name=CPU2 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=00000001
+SrcName=
+[Source5]
+Name=CPU3 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=00000002
+SrcName=
+[Source6]
+Name=CPU4 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=00000003
+SrcName=
+[Source7]
+Name=CPU5 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=00000004
+SrcName=
+[Source8]
+Name=CPU6 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=00000005
+SrcName=
+[Source9]
+Name=CPU7 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=00000006
+SrcName=
+[Source10]
+Name=CPU8 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=00000007
+SrcName=
+[Source11]
+Name=CPU9 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=00000008
+SrcName=
+[Source12]
+Name=CPU10 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=00000009
+SrcName=
+[Source13]
+Name=CPU11 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=0000000A
+SrcName=
+[Source14]
+Name=CPU12 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=0000000B
+SrcName=
+[Source15]
+Name=CPU13 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=0000000C
+SrcName=
+[Source16]
+Name=CPU14 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=0000000D
+SrcName=
+[Source17]
+Name=CPU15 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=0000000E
+SrcName=
+[Source18]
+Name=CPU16 clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=000000A0
+Gpu=0000000F
+SrcName=
+[Source19]
+Name=CPU1 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=00000000
+SrcName=
+[Source20]
+Name=CPU2 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=00000001
+SrcName=
+[Source21]
+Name=CPU3 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=00000002
+SrcName=
+[Source22]
+Name=CPU4 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=00000003
+SrcName=
+[Source23]
+Name=CPU5 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=00000004
+SrcName=
+[Source24]
+Name=CPU6 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=00000005
+SrcName=
+[Source25]
+Name=CPU7 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=00000006
+SrcName=
+[Source26]
+Name=CPU8 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=00000007
+SrcName=
+[Source27]
+Name=CPU9 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=00000008
+SrcName=
+[Source28]
+Name=CPU10 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=00000009
+SrcName=
+[Source29]
+Name=CPU11 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=0000000A
+SrcName=
+[Source30]
+Name=CPU12 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=0000000B
+SrcName=
+[Source31]
+Name=CPU13 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=0000000C
+SrcName=
+[Source32]
+Name=CPU14 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=0000000D
+SrcName=
+[Source33]
+Name=CPU15 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=0000000E
+SrcName=
+[Source34]
+Name=CPU16 usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=0000000F
+SrcName=
+[Source35]
+Name=CPU1 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=00000000
+SrcName=
+[Source36]
+Name=CPU2 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=00000001
+SrcName=
+[Source37]
+Name=CPU3 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=00000002
+SrcName=
+[Source38]
+Name=CPU4 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=00000003
+SrcName=
+[Source39]
+Name=CPU5 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=00000004
+SrcName=
+[Source40]
+Name=CPU6 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=00000005
+SrcName=
+[Source41]
+Name=CPU7 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=00000006
+SrcName=
+[Source42]
+Name=CPU8 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=00000007
+SrcName=
+[Source43]
+Name=CPU9 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=00000008
+SrcName=
+[Source44]
+Name=CPU10 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=00000009
+SrcName=
+[Source45]
+Name=CPU11 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=0000000A
+SrcName=
+[Source46]
+Name=CPU12 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=0000000B
+SrcName=
+[Source47]
+Name=CPU13 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=0000000C
+SrcName=
+[Source48]
+Name=CPU14 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=0000000D
+SrcName=
+[Source49]
+Name=CPU15 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=0000000E
+SrcName=
+[Source50]
+Name=CPU16 temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000080
+Gpu=0000000F
+SrcName=
+[Source51]
+Name=CPU power
+Units=W
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000100
+Gpu=FFFFFFFF
+SrcName=
+[Source52]
+Name=CPU usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000090
+Gpu=FFFFFFFF
+SrcName=
+[Source53]
+Name=GPU usage
+Units=%
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000030
+Gpu=00000000
+SrcName=
+[Source54]
+Name=Core clock
+Units=MHz
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000020
+Gpu=00000000
+SrcName=
+[Source55]
+Name=GPU temperature
+Units=°C
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000000
+Gpu=00000000
+SrcName=
+[Source56]
+Name=Framerate
+Units=FPS
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000050
+Gpu=FFFFFFFF
+SrcName=
+[Source57]
+Name=IsBenchmarkActive
+Units=
+Format=
+Formula=(rtssflags & 0x100) != 0
+Provider=HAL
+ID=Stub
+[Source58]
+Name=Framerate Avg
+Units=FPS
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000053
+Gpu=FFFFFFFF
+SrcName=
+[Source59]
+Name=Framerate 1% Low
+Units=FPS
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000055
+Gpu=FFFFFFFF
+SrcName=
+[Source60]
+Name=Framerate 0.1% Low
+Units=FPS
+Format=
+Formula=
+Provider=MSI Afterburner
+SrcId=00000056
+Gpu=FFFFFFFF
+SrcName=
+[Source61]
+Name=Display1 refresh rate
+Units=Hz
+Format=
+Formula=
+Provider=HAL
+ID=Display1 refresh rate
+[Source62]
+Name=PresentMode
+Units=
+Format=
+Formula=
+Provider=PresentMon
+ID=PresentMode
+[Source63]
+Name=msGpuActive
+Units=ms
+Format=
+Formula=
+Provider=PresentMon
+ID=msGpuActive
+[Source64]
+Name=msBetweenPresents
+Units=ms
+Format=
+Formula=
+Provider=PresentMon
+ID=msBetweenPresents
+[Source65]
+Name=IsGpuLimited
+Units=
+Format=
+Formula=(msGpuActive / msBetweenPresents) >= 0.75
+Provider=HAL
+ID=Stub
+[Layer0]
+Name=Box Header Game
+Text=
+PositionX=0
+PositionY=0
+ExtentX=207
+ExtentY=8
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+BgndColor=DB2B2B2B
+[Layer1]
+Name=Game Text
+Text=GAME
+PositionX=1
+PositionY=1
+ExtentX=-1
+ExtentY=-1
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+[Layer2]
+Name=Game Title
+Text=<EXE>
+PositionX=18
+PositionY=1
+ExtentX=188
+ExtentY=9
+ExtentOrigin=0
+Size=70
+TextColor=11C511
+[Layer3]
+Name=Box Info
+Text=
+PositionX=104
+PositionY=9
+ExtentX=103
+ExtentY=127
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+BgndColor=822B2B2B
+[Layer4]
+Name=Box Header Info Config
+Text=
+PositionX=104
+PositionY=9
+ExtentX=103
+ExtentY=10
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+BgndColor=DB2B2B2B
+[Layer5]
+Name=Config Text
+Text=CONFIG
+PositionX=105
+PositionY=11
+ExtentX=24
+ExtentY=1
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+[Layer6]
+Name=Config
+Text=<RES>\n%Display1 refresh rate%hz\n<APP>\n<SWITCH PresentMode><CASE 1>HW:Legacy Flip<CASE 2>HW:Legacy Copy<CASE 3>HW:Independent Flip<CASE 4>COMP:Flip<CASE 5>COMP:CPU Copy<CASE 6>COMP:GPU Copy<CASE 8>HW COMP:Independent Flip
+PositionX=105
+PositionY=21
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer7]
+Name=Box Header Info Driver
+Text=
+PositionX=104
+PositionY=51
+ExtentX=103
+ExtentY=10
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+BgndColor=DB2B2B2B
+[Layer8]
+Name=Driver Text
+Text=DRIVER
+PositionX=105
+PositionY=52
+ExtentX=12
+ExtentY=7
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer9]
+Name=Driver
+Text=%Driver%
+PositionX=105
+PositionY=63
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer10]
+Name=Box Header Info Time
+Text=
+PositionX=104
+PositionY=71
+ExtentX=103
+ExtentY=8
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+BgndColor=DB2B2B2B
+[Layer11]
+Name=Time Text
+Text=TIME
+PositionX=105
+PositionY=72
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer12]
+Name=Time
+Text=%Time12%\n%Date%
+PositionX=105
+PositionY=82
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer13]
+Name=Box Header Info Limit
+Text=
+PositionX=104
+PositionY=97
+ExtentX=103
+ExtentY=10
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+BgndColor=DB2B2B2B
+[Layer14]
+Name=Limit Text
+Text=LIMIT
+PositionX=105
+PositionY=98
+ExtentX=20
+ExtentY=6
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer15]
+Name=Limit
+Text=<IF IsGpuLimited>GPU<ELSE>CPU
+PositionX=105
+PositionY=109
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer16]
+Name=Box Header Info FPS
+Text=
+PositionX=104
+PositionY=117
+ExtentX=103
+ExtentY=10
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+BgndColor=DB2B2B2B
+[Layer17]
+Name=FPS Text
+Text=FPS
+PositionX=105
+PositionY=118
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer18]
+Name=FPS
+Text=<FR> fps
+PositionX=105
+PositionY=128
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer19]
+Name=Box CPU
+Text=
+PositionX=0
+PositionY=9
+ExtentX=103
+ExtentY=147
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+BgndColor=822B2B2B
+[Layer20]
+Name=Box Header CPU
+Text=
+PositionX=0
+PositionY=9
+ExtentX=103
+ExtentY=10
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+BgndColor=DB2B2B2B
+[Layer21]
+Name=CPU Text
+Text=%CPUShort% %RAM%
+PositionX=1
+PositionY=10
+ExtentX=60
+ExtentY=6
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer22]
+Name=CPU
+Text=%RAM usage%mb
+PositionX=34
+PositionY=20
+ExtentX=60
+ExtentY=7
+ExtentOrigin=0
+Size=70
+TextColor=11C511
+[Layer23]
+Name=CPU Power
+Text=%CPU power%w
+PositionX=66
+PositionY=20
+ExtentX=5
+ExtentY=7
+ExtentOrigin=0
+Size=70
+TextColor=11C511
+[Layer24]
+Name=CPU Usage
+Text=%CPU usage%%
+PositionX=86
+PositionY=20
+ExtentX=1
+ExtentY=7
+ExtentOrigin=0
+Size=70
+TextColor=11C511
+[Layer25]
+Name=CPU 1 Text
+Text=CPU 1
+PositionX=1
+PositionY=28
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer26]
+Name=CPU 1
+Text=%CPU1 clock%mhz %CPU1 temperature%°C %CPU1 usage%%
+PositionX=34
+PositionY=28
+ExtentX=60
+ExtentY=8
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer27]
+Name=CPU 2 Text
+Text=CPU 2
+PositionX=1
+PositionY=36
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer28]
+Name=CPU 2
+Text=%CPU2 clock%mhz %CPU2 temperature%°C %CPU2 usage%%
+PositionX=34
+PositionY=36
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer29]
+Name=CPU 3 Text
+Text=CPU 3
+PositionX=1
+PositionY=44
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer30]
+Name=CPU 3
+Text=%CPU3 clock%mhz %CPU3 temperature%°C %CPU3 usage%%
+PositionX=34
+PositionY=44
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer31]
+Name=CPU 4 Text
+Text=CPU 4
+PositionX=1
+PositionY=52
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer32]
+Name=CPU 4
+Text=%CPU4 clock%mhz %CPU4 temperature%°C %CPU4 usage%%
+PositionX=34
+PositionY=52
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer33]
+Name=CPU 5 Text
+Text=CPU 5
+PositionX=1
+PositionY=60
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer34]
+Name=CPU 5
+Text=%CPU5 clock%mhz %CPU5 temperature%°C %CPU5 usage%%
+PositionX=34
+PositionY=60
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer35]
+Name=CPU 6 Text
+Text=CPU 6
+PositionX=1
+PositionY=68
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer36]
+Name=CPU 6
+Text=%CPU6 clock%mhz %CPU6 temperature%°C %CPU6 usage%%
+PositionX=34
+PositionY=68
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer37]
+Name=CPU 7 Text
+Text=CPU 7
+PositionX=1
+PositionY=76
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer38]
+Name=CPU 7
+Text=%CPU7 clock%mhz %CPU7 temperature%°C %CPU7 usage%%
+PositionX=34
+PositionY=76
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer39]
+Name=CPU 8 Text
+Text=CPU 8
+PositionX=1
+PositionY=84
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer40]
+Name=CPU 8
+Text=%CPU8 clock%mhz %CPU8 temperature%°C %CPU8 usage%%
+PositionX=34
+PositionY=84
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer41]
+Name=CPU 9 Text
+Text=CPU 9
+PositionX=1
+PositionY=92
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer42]
+Name=CPU 9
+Text=%CPU9 clock%mhz %CPU9 temperature%°C %CPU9 usage%%
+PositionX=34
+PositionY=92
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer43]
+Name=CPU 10 Text
+Text=CPU 10
+PositionX=1
+PositionY=100
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer44]
+Name=CPU 10
+Text=%CPU10 clock%mhz %CPU10 temperature%°C %CPU10 usage%%
+PositionX=34
+PositionY=100
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer45]
+Name=CPU 11 Text
+Text=CPU 11
+PositionX=1
+PositionY=108
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer46]
+Name=CPU 11
+Text=%CPU11 clock%mhz %CPU11 temperature%°C %CPU11 usage%%
+PositionX=34
+PositionY=108
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer47]
+Name=CPU 12 Text
+Text=CPU 12
+PositionX=1
+PositionY=116
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer48]
+Name=CPU 12
+Text=%CPU12 clock%mhz %CPU12 temperature%°C %CPU12 usage%%
+PositionX=34
+PositionY=116
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer49]
+Name=CPU 13 Text
+Text=CPU 13
+PositionX=1
+PositionY=124
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer50]
+Name=CPU 13
+Text=%CPU13 clock%mhz %CPU13 temperature%°C %CPU13 usage%%
+PositionX=34
+PositionY=124
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer51]
+Name=CPU 14 Text
+Text=CPU 14
+PositionX=1
+PositionY=132
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer52]
+Name=CPU 14
+Text=%CPU14 clock%mhz %CPU14 temperature%°C %CPU14 usage%%
+PositionX=34
+PositionY=132
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer53]
+Name=CPU 15 Text
+Text=CPU 15
+PositionX=1
+PositionY=140
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer54]
+Name=CPU 15
+Text=%CPU15 clock%mhz %CPU15 temperature%°C %CPU15 usage%%
+PositionX=34
+PositionY=140
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer55]
+Name=CPU 16 Text
+Text=CPU 16
+PositionX=1
+PositionY=148
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer56]
+Name=CPU 16
+Text=%CPU16 clock%mhz %CPU16 temperature%°C %CPU16 usage%%
+PositionX=34
+PositionY=148
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer57]
+Name=Box GPU
+Text=
+PositionX=0
+PositionY=157
+ExtentX=103
+ExtentY=38
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+BgndColor=822B2B2B
+[Layer58]
+Name=Box Header GPU
+Text=
+PositionX=0
+PositionY=157
+ExtentX=103
+ExtentY=10
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+BgndColor=DB2B2B2B
+[Layer59]
+Name=GPU Text
+Text=%GPU% %VRAM%
+PositionX=1
+PositionY=158
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer60]
+Name=GPU Text
+Text=GPU
+PositionX=1
+PositionY=178
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer61]
+Name=GPU
+Text=%Memory usage%mb
+PositionX=34
+PositionY=170
+ExtentX=48
+ExtentY=7
+ExtentOrigin=0
+Size=70
+TextColor=11C511
+[Layer62]
+Name=GPU Usage
+Text=%GPU usage%%
+PositionX=66
+PositionY=170
+ExtentX=2
+ExtentY=7
+ExtentOrigin=0
+Size=70
+TextColor=11C511
+[Layer63]
+Name=GPU Clocks
+Text=%Core clock%mhz %GPU temperature%°C\n%Memory clock%mhz
+PositionX=34
+PositionY=178
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer64]
+Name=Box Benchmark
+VisibilitySource=IsBenchmarkActive
+Text=
+PositionX=104
+PositionY=137
+ExtentX=67
+ExtentY=64
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+BgndColor=822B2B2B
+[Layer65]
+Name=Box Header Benchmark
+VisibilitySource=IsBenchmarkActive
+Text=
+PositionX=104
+PositionY=137
+ExtentX=67
+ExtentY=17
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+BgndColor=DB2B2B2B
+[Layer66]
+Name=Benchmark Time Text
+VisibilitySource=IsBenchmarkActive
+Text="   Benchmark\n    <BTIME>"
+PositionX=107
+PositionY=139
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer67]
+Name=Benchmark Text
+VisibilitySource=IsBenchmarkActive
+Text=FPS\nAVG\nMAX\nMIN\n1%\n0.1%
+PositionX=105
+PositionY=156
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer68]
+Name=Benchmark
+VisibilitySource=IsBenchmarkActive
+Text=<FR> fps\n<FRAVG> fps\n<FRMAX> fps\n<FRMIN> fps\n<FR10L>  %\n<FR01L>  %
+PositionX=138
+PositionY=156
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+
+"@
+Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\Plugins\Client\Overlays\fr33thy.ovl" -Value $fr33thyovl -Force
+
+# Создание desktopoverlayhost.cfg для RivaTuner
+$DesktopOverlayHostCfg = @"
+[Settings]
+WindowX=0
+WindowY=0
+WindowW=1024
+WindowH=768
+Transparent=1
+Topmost=1
+LockPos=1
+ColorKey=1
+BgndColor=00000000
+Alpha=000000FF
+Renderer=1
+SuspendInIdle=0
+ScaleToFit=0
+Maximized=1
+
+
+"@
+Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\DesktopOverlayHost.cfg" -Value $DesktopOverlayHostCfg -Force
+
+# Очистка и настройка ярлыков в меню Пуск
+Move-Item -Path "$env:AppData\Microsoft\Windows\Start Menu\Programs\MSI Afterburner\MSI Afterburner.lnk" -Destination "$env:ProgramData\Microsoft\Windows\Start Menu\Programs" -Force -ErrorAction SilentlyContinue | Out-Null
+Remove-Item "$env:AppData\Microsoft\Windows\Start Menu\Programs\MSI Afterburner" -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
+Remove-Item "$env:AppData\Microsoft\Windows\Start Menu\Programs\RivaTuner Statistics Server" -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
+
+# Применение киберспортивного профиля NVIDIA (RTX 5080 + 9800X3D)
+Write-Host "Применение киберспортивного профиля драйвера NVIDIA..." -ForegroundColor Yellow
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
+$npiDir = "$env:TEMP\npi"
+$npiExe = if (Test-Path "$scriptDir\nvidiaProfileInspector.exe") { "$scriptDir\nvidiaProfileInspector.exe" } else { "$npiDir\nvidiaProfileInspector.exe" }
+$localNip = if (Test-Path "$scriptDir\NV-Esports-Ultimate.nip") { "$scriptDir\NV-Esports-Ultimate.nip" } else { "$npiDir\NV-Esports-Ultimate.nip" }
+try {
+    if (-not (Test-Path $npiExe)) {
+        New-Item -Path $npiDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+        $npiZip = "$env:TEMP\nvidiaProfileInspector.zip"
+        Invoke-WebRequest -Uri "https://github.com/Orbmu2k/nvidiaProfileInspector/releases/download/2.4.0.4/nvidiaProfileInspector.zip" -OutFile $npiZip -UseBasicParsing -TimeoutSec 10
+        Expand-Archive -Path $npiZip -DestinationPath $npiDir -Force
+        Remove-Item $npiZip -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $npiExe) {
+        if (-not (Test-Path $localNip)) {
+            $nipXml = @"
+<?xml version="1.0" encoding="utf-16"?>
+<ArrayOfProfile>
+  <Profile>
+    <ProfileName>Base Profile</ProfileName>
+    <Executeables />
+    <Settings>
+      <ProfileSetting><SettingNameInfo>Shader Cache</SettingNameInfo><SettingID>1675263</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Shader disk cache maximum size</SettingNameInfo><SettingID>11306135</SettingID><SettingValue>4294967295</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Power management mode</SettingNameInfo><SettingID>274197361</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Maximum pre-rendered frames</SettingNameInfo><SettingID>8102046</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Maximum frames allowed</SettingNameInfo><SettingID>546199011</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Preferred refresh rate</SettingNameInfo><SettingID>6600001</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Triple buffering</SettingNameInfo><SettingID>553505273</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Threaded optimization</SettingNameInfo><SettingID>549528094</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Texture filtering - Quality</SettingNameInfo><SettingID>13510289</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Texture filtering - Anisotropic sample optimization</SettingNameInfo><SettingID>15151633</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Texture filtering - Anisotropic filter optimization</SettingNameInfo><SettingID>8703344</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Texture filtering - Negative LOD bias</SettingNameInfo><SettingID>1686376</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Texture filtering - Trilinear optimization</SettingNameInfo><SettingID>3066610</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Anisotropic filtering mode</SettingNameInfo><SettingID>282245910</SettingID><SettingValue>2</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Anisotropic filtering setting</SettingNameInfo><SettingID>270426537</SettingID><SettingValue>16</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Vertical Sync</SettingNameInfo><SettingID>11041231</SettingID><SettingValue>138504007</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Vertical Sync Tear Control</SettingNameInfo><SettingID>5912412</SettingID><SettingValue>2525368439</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>G-SYNC</SettingNameInfo><SettingID>279476652</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>G-SYNC</SettingNameInfo><SettingID>279476687</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Enable G-SYNC globally</SettingNameInfo><SettingID>294973784</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Toggle the VRR global feature</SettingNameInfo><SettingID>278196567</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>VRR requested state</SettingNameInfo><SettingID>278196727</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Display the VRR Indicator</SettingNameInfo><SettingID>268604728</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Enable Ansel</SettingNameInfo><SettingID>276158834</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Enable overlay</SettingNameInfo><SettingID>543959236</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Display the PhysX indicator</SettingNameInfo><SettingID>278196591</SettingID><SettingValue>877871204</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Enable FXAA Indicator</SettingNameInfo><SettingID>275315612</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>SILK Smoothness</SettingNameInfo><SettingID>9990737</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Flag to control smooth AFR behavior</SettingNameInfo><SettingID>270198627</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Idle Application Max FPS Limit</SettingNameInfo><SettingID>277041174</SettingID><SettingValue>30</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Idle Application Threshold Time out in seconds</SettingNameInfo><SettingID>277041175</SettingID><SettingValue>501</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>FRL Low Latency</SettingNameInfo><SettingID>277041152</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Frame Rate Limiter</SettingNameInfo><SettingID>277041154</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Background Application Max Frame Rate</SettingNameInfo><SettingID>277041157</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>NVIDIA Predefined Sharpen Usage</SettingNameInfo><SettingID>5867849</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+    </Settings>
+  </Profile>
+</ArrayOfProfile>
+"@
+            $localNip = "$npiDir\NV-Esports-Ultimate.nip"
+            Set-Content -Path $localNip -Value $nipXml -Encoding Unicode -Force
+        }
+        Start-Process -FilePath $npiExe -ArgumentList @("`"$localNip`"", "-silent") -Wait -WindowStyle Hidden
+        Write-Host "      Профиль NVIDIA успешно применен (шейдерный кэш Unlimited, P-State 1, 16x AF, Threaded On)." -ForegroundColor Green
+    }
+} catch {
+    Write-Host "      Предупреждение: не удалось применить профиль NVIDIA: $($_.Exception.Message)" -ForegroundColor DarkGray
+}
+
+# --- 7. ЗАПУСК ПРОЦЕССОВ И АКТИВАЦИЯ ПРОФИЛЕЙ ---
+Show-InstallerProgress -Step 7 -TotalSteps 8 -Activity "Запуск процессов и активация профилей разгона/OSD"
+$MsiExe = "$MsiDir\MSIAfterburner.exe"
+$task = Get-ScheduledTask -TaskName "MSIAfterburner" -ErrorAction SilentlyContinue
+
+if ($task) {
+    Write-InstallerLog -Level "INFO" -Action "Start" -Message "Запуск MSI Afterburner через системный планировщик задач (с правами наивысшего уровня)..."
+    Start-ScheduledTask -TaskName "MSIAfterburner"
+} elseif (Test-Path $MsiExe) {
+    Write-InstallerLog -Level "INFO" -Action "Start" -Message "Запуск MSI Afterburner напрямую с ключами -s -m (тихий трей-режим)..."
+    Start-Process -FilePath $MsiExe -ArgumentList "-s -m" -WindowStyle Hidden
+}
+
+# Адаптивное ожидание старта процессов (таймаут 5 секунд вместо фиксированного Start-Sleep)
+$procWaitSw = [System.Diagnostics.Stopwatch]::StartNew()
+$msiProc = $null
+$rtssProc = $null
+while ($procWaitSw.ElapsedMilliseconds -lt 5000) {
+    $msiProc = Get-Process -Name "MSIAfterburner" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $rtssProc = Get-Process -Name "RTSS" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($msiProc -and $rtssProc) { break }
+    Start-Sleep -Milliseconds 150
+}
+
+if ($msiProc) {
+    Write-InstallerLog -Level "OK" -Action "Process" -Message "MSI Afterburner успешно запущен (PID: $($msiProc.Id))." -Timer $procWaitSw
+} else {
+    Write-InstallerLog -Level "ERROR" -Action "Process" -Message "Не удалось обнаружить запущенный процесс MSIAfterburner.exe!"
+}
+
+if ($rtssProc) {
+    Write-InstallerLog -Level "OK" -Action "Process" -Message "RivaTuner Statistics Server (RTSS) запущен в фоне (PID: $($rtssProc.Id))."
+} else {
+    Write-InstallerLog -Level "WARN" -Action "Process" -Message "RTSS.exe пока не инициализирован или ожидает первого 3D-вызова."
+}
+
+# --- 8. ФИНАЛЬНАЯ ВЕРИФИКАЦИЯ И ИТОГОВЫЙ ОТЧЁТ ---
+Show-InstallerProgress -Step 8 -TotalSteps 8 -Activity "Финальная верификация параметров конфигураций"
+$vMsiCfg = "$MsiDir\Profiles\MSIAfterburner.cfg"
+$vRtssGlobal = "$RtssDir\Profiles\Global"
+$vRtssHotkey = "$RtssDir\Plugins\Client\HotkeyHandler.cfg"
+
+$chkEnableServer = if (Test-Path $vMsiCfg) { (Get-Content $vMsiCfg | Select-String "^EnableServer\s*=\s*(\d+)").Matches[0].Groups[1].Value } else { "N/A" }
+$chkSingleTray   = if (Test-Path $vMsiCfg) { (Get-Content $vMsiCfg | Select-String "^SingleTrayIconMode\s*=\s*(\d+)").Matches[0].Groups[1].Value } else { "N/A" }
+$chkAbHotkey     = if (Test-Path $vMsiCfg) { (Get-Content $vMsiCfg | Select-String "^OSDToggleHotkey\s*=\s*([0-9a-fA-F]+)").Matches[0].Groups[1].Value } else { "N/A" }
+$chkEnableOSD    = if (Test-Path $vRtssGlobal) { (Get-Content $vRtssGlobal | Select-String "^EnableOSD\s*=\s*(\d+)").Matches[0].Groups[1].Value } else { "N/A" }
+$chkRtssHotkey   = if (Test-Path $vRtssHotkey) { (Get-Content $vRtssHotkey | Select-String "^OSDToggleHotkey\s*=\s*([0-9a-fA-F]+)").Matches[0].Groups[1].Value } else { "N/A" }
+
+Write-InstallerLog -Level "INFO" -Action "Verify" -Message "Параметры Afterburner: EnableServer=$chkEnableServer, SingleTrayIconMode=$chkSingleTray, Hotkey=$chkAbHotkey"
+Write-InstallerLog -Level "INFO" -Action "Verify" -Message "Параметры RTSS: EnableOSD=$chkEnableOSD, Hotkey=$chkRtssHotkey"
+
+$script:InstallTimer.Stop()
+$totalSec = [math]::Round($script:InstallTimer.ElapsedMilliseconds / 1000, 2)
+
+Write-Host "`n==========================================================" -ForegroundColor Green
+Write-Host "                ИТОГОВЫЙ ОТЧЁТ УСТАНОВКИ                  " -ForegroundColor Green
+Write-Host "==========================================================" -ForegroundColor Green
+Write-Host ("  Статус MSI Afterburner : " + $(if ($isMsiInstalled) { "Уже установлен / Настроен" } else { "Установлен с нуля" })) -ForegroundColor White
+Write-Host ("  Процесс Afterburner    : " + $(if ($msiProc) { "Работает (PID: $($msiProc.Id))" } else { "Не запущен" })) -ForegroundColor White
+Write-Host ("  Статус RTSS            : " + $(if ($isRtssInstalled) { "Уже установлен / Настроен" } else { "Установлен с нуля" })) -ForegroundColor White
+Write-Host ("  Процесс RTSS           : " + $(if ($rtssProc) { "Работает в фоне (PID: $($rtssProc.Id))" } else { "Ожидает старта" })) -ForegroundColor White
+Write-Host ("  Иконка RTSS в трее     : " + $(if ($chkSingleTray -eq "1") { "СКРЫТА (SingleTrayIconMode = 1)" } else { "Видима" })) -ForegroundColor Cyan
+Write-Host ("  Оверлей по умолчанию   : " + $(if ($chkEnableOSD -eq "0") { "СКРЫТ (EnableOSD = 0)" } else { "Видим" })) -ForegroundColor Cyan
+Write-Host ("  Горячая клавиша OSD    : Alt + 1 (Синхронизировано: AB + RTSS)") -ForegroundColor Cyan
+Write-Host ("  Файл лога сессии       : $script:LogFile") -ForegroundColor DarkGray
+Write-Host ("  Общее время выполнения : $totalSec сек") -ForegroundColor Green
+Write-Host "==========================================================`n" -ForegroundColor Green
+
+Write-InstallerLog -Level "OK" -Action "Complete" -Message "Установка и настройка успешно завершены за $totalSec сек."
