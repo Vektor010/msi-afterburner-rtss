@@ -1,0 +1,41 @@
+name: "🐛 Сообщение об ошибке (Bug Report)"
+description: "Сообщить о проблеме с установкой, оверлеем или запуском скриптов"
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Благодарим за сообщение о проблеме! Пожалуйста, заполните форму ниже.
+  - type: dropdown
+    id: script_name
+    attributes:
+      label: "Какой скрипт запускался?"
+      options:
+        - "Setup.ps1 (Главное меню)"
+        - "MSI-Afterburner-NextGen.ps1 (Esports OSD)"
+        - "MSI-Afterburner-Moi.ps1 (Детальный OSD)"
+        - "MSI-Afterburner-Standalone.ps1 (Чистая установка)"
+        - "Syntax.Tests.ps1 (Автотесты)"
+    validations:
+      required: true
+  - type: textarea
+    id: hardware
+    attributes:
+      label: "Конфигурация ПК"
+      description: "Укажите вашу видеокарту, процессор и версию Windows (например: RTX 5080, Ryzen 7 9800X3D, Windows 11 24H2)"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: "Описание проблемы"
+      description: "Что пошло не так? Что ожидалось и что произошло фактически?"
+    validations:
+      required: true
+  - type: textarea
+    id: console_output
+    attributes:
+      label: "Лог консоли PowerShell"
+      description: "Вставьте текст ошибки из окна PowerShell"
+      render: shell

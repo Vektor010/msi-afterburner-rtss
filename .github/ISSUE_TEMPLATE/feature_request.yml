@@ -1,0 +1,17 @@
+name: "✨ Предложение по улучшению (Feature Request)"
+description: "Предложить новый OSD-пресет, поддержку оборудования или оптимизацию"
+title: "[FEATURE]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: "Суть предложения"
+      description: "Опишите, какую возможность или пресет вы хотите видеть в проекте"
+    validations:
+      required: true
+  - type: textarea
+    id: rationale
+    attributes:
+      label: "Какую задачу это решает?"
+      description: "Почему это полезно для других игроков и пользователей?"

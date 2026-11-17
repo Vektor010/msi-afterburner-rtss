@@ -21,6 +21,8 @@
 * **Architecture & Hook IPC:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 * **Changelog & History:** [`docs/CHANGELOG.md`](docs/CHANGELOG.md)
 * **Known Issues & Workarounds:** [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md)
+* **Contribution Guidelines:** [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)
+* **Security Policy:** [`docs/SECURITY.md`](docs/SECURITY.md)
 
 ---
 
@@ -44,7 +46,9 @@ msi-afterburner-rtss/
 └── docs/                           # Technical documentation
     ├── ARCHITECTURE.md
     ├── CHANGELOG.md
-    └── KNOWN_ISSUES.md
+    ├── CONTRIBUTING.md
+    ├── KNOWN_ISSUES.md
+    └── SECURITY.md
 ```
 
 ---
