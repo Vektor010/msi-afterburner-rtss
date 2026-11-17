@@ -20,7 +20,6 @@ powershell -ExecutionPolicy Bypass -File .\Setup.ps1
   [1] NextGen — Киберспортивный OSD (MSI-Afterburner-NextGen.ps1)
   [2] Moi — Детальный OSD для бенчмарков (MSI-Afterburner-Moi.ps1)
   [3] Standalone — Чистая базовая установка (MSI-Afterburner-Standalone.ps1)
-  [4] Профиль андервольта: RTX 5080 (0.950V / 2850MHz)
   [T] Запустить тесты качества (Syntax.Tests.ps1)
   [Q] Выход
 ========================================================================
@@ -53,9 +52,6 @@ flowchart TD
     Choice -->|"Играть в CS2 / шутеры, важен чистый экран и FPS"| NextGen["MSI-Afterburner-NextGen.ps1\n(Компактный OSD: FPS, Frametime, 1% Low, общие CPU/GPU)"]
     Choice -->|"Тестировать ПК, смотреть частоты и температуры всех ядер"| Moi["MSI-Afterburner-Moi.ps1\n(Детальный OSD: поядерный CPU0..15, память, графики)"]
     Choice -->|"Просто установить софт без разгона и твиков драйвера"| Standalone["MSI-Afterburner-Standalone.ps1\n(Чистая базовая установка)"]
-    
-    Start --> Profiles{"Применить только андервольт RTX 5080?"}
-    Profiles -->|"GeForce RTX 5080"| P5080["profiles/RTX-5080-Undervolt.ps1\n(0.950V @ 2850MHz)"]
 ```
 
 ---
@@ -99,8 +95,6 @@ msi-afterburner-rtss/
 ├── README.md                       # Главное руководство пользователя
 ├── AGENTS.md                       # Инструкции для ИИ-агентов
 ├── LICENSE                         # Лицензия
-├── profiles/                       # Профили видеокарты
-│   └── RTX-5080-Undervolt.ps1      # Профиль андервольта RTX 5080 (0.950V / 2850MHz)
 ├── tools/                          # Низколатентные утилиты NVIDIA
 │   ├── nvidiaProfileInspector.exe
 │   ├── nvidiaProfileInspector.exe.config
@@ -127,15 +121,13 @@ powershell -ExecutionPolicy Bypass -File .\tests\Syntax.Tests.ps1
 Результат:
 ```
 === ApexTuner Automated Test Suite ===
-Discovered 7 PowerShell scripts for evaluation.
+Discovered 5 PowerShell scripts for evaluation.
 
 Test Group 1: Abstract Syntax Tree (AST) Validation
   [PASS] AST Syntax: MSI-Afterburner-Moi.ps1
   [PASS] AST Syntax: MSI-Afterburner-NextGen.ps1
   [PASS] AST Syntax: MSI-Afterburner-Standalone.ps1
   [PASS] AST Syntax: Setup.ps1
-  [PASS] AST Syntax: RTX-3060-Undervolt.ps1
-  [PASS] AST Syntax: RTX-5080-Undervolt.ps1
   [PASS] AST Syntax: Syntax.Tests.ps1
 
 Test Group 2: UTF-8 BOM Encoding Integrity
@@ -143,8 +135,6 @@ Test Group 2: UTF-8 BOM Encoding Integrity
   [PASS] UTF-8 BOM Header: MSI-Afterburner-NextGen.ps1
   [PASS] UTF-8 BOM Header: MSI-Afterburner-Standalone.ps1
   [PASS] UTF-8 BOM Header: Setup.ps1
-  [PASS] UTF-8 BOM Header: RTX-3060-Undervolt.ps1
-  [PASS] UTF-8 BOM Header: RTX-5080-Undervolt.ps1
   [PASS] UTF-8 BOM Header: Syntax.Tests.ps1
 
 Test Group 3: Live Configuration Contracts
@@ -154,6 +144,6 @@ Test Group 3: Live Configuration Contracts
   [PASS] HotkeyHandler.cfg contains OSDToggleHotkey=00040031
 
 ==================================================
-Test Results: Total: 18 | Passed: 18 | Failed: 0
+Test Results: Total: 14 | Passed: 14 | Failed: 0
 ==================================================
 ```

@@ -39,14 +39,11 @@ while ($true) {
     Write-Host "      -> Установка MSI Afterburner + RTSS с тихим треем и хоткеем Alt+1." -ForegroundColor Gray
     Write-Host "      -> БЕЗ изменения частот GPU, кривых напряжения и профилей драйвера.`n" -ForegroundColor Gray
 
-    Write-Host "  [4] Профиль андервольта: RTX 5080 (0.950V / 2850MHz)" -ForegroundColor Magenta
-    Write-Host "      -> Применить VFCurve и настройки охлаждения для RTX 5080.`n" -ForegroundColor Gray
-
     Write-Host "  [T] Запустить автоматические тесты качества (Syntax.Tests.ps1)" -ForegroundColor Cyan
     Write-Host "  [Q] Выход`n" -ForegroundColor DarkGray
     Write-Host "========================================================================" -ForegroundColor Cyan
 
-    $choice = Read-Host "Введите номер действия [1-4, T, Q]"
+    $choice = Read-Host "Введите номер действия [1-3, T, Q]"
 
     switch ($choice.ToUpper().Trim()) {
         "1" {
@@ -64,12 +61,6 @@ while ($true) {
         "3" {
             $target = Join-Path $root "MSI-Afterburner-Standalone.ps1"
             Write-Host "`nЗапуск MSI-Afterburner-Standalone.ps1..." -ForegroundColor White
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File $target
-            Read-Host "`nНажмите Enter для возврата в меню..."
-        }
-        "4" {
-            $target = Join-Path $root "profiles\RTX-5080-Undervolt.ps1"
-            Write-Host "`nПрименение андервольта RTX 5080..." -ForegroundColor Magenta
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File $target
             Read-Host "`nНажмите Enter для возврата в меню..."
         }

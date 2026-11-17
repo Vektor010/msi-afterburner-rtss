@@ -34,8 +34,6 @@ msi-afterburner-rtss/
 ├── README.md                       # Primary documentation (Russian)
 ├── AGENTS.md                       # Universal AI agent instruction hub (this file)
 ├── LICENSE                         # Software license & terms
-├── profiles/                       # Isolated GPU undervolt/clock curves
-│   └── RTX-5080-Undervolt.ps1      # Verified RTX 5080 curve & memory offsets
 ├── tools/                          # Portable binaries & low-latency profiles
 │   ├── nvidiaProfileInspector.exe
 │   ├── nvidiaProfileInspector.exe.config
