@@ -1,125 +1,118 @@
-# ⚡ MSI Afterburner & RTSS Automation & Tuning Suite
+# ⚡ MSI Afterburner & RTSS Esports & Tuning Suite
 
-Отдельный специализированный репозиторий для автоматической установки, настройки «под ключ» и киберспортивной оптимизации **MSI Afterburner** и **RivaTuner Statistics Server (RTSS)**.
+[🇬🇧 English](README.md) | [🇷🇺 Русский](README_RU.md)
 
----
-
-## 🎯 Быстрый старт (Что запустить новичку?)
-
-| Ваша цель | Рекомендуемый файл | Что делает |
-|---|---|---|
-| **Хочу всё настроить в 1 клик (рекомендуется)** | 🟢 **`Install-MSIAfterburner-Classic.ps1`** | Полная установка софта, детальный классический оверлей (ядра CPU0–CPU7, частоты, температуры, 1% Low), разгон/андервольт RTX 5080, твик драйвера NVIDIA, режим скрытого трея и хоткей Alt+1. |
-| **Хочу минималистичный экран без лишних цифр** | 🔵 **`Install-MSIAfterburner-NextGen.ps1`** | Компактный вертикальный оверлей NextGen (только FPS, фреймтайм, общая загрузка). |
-| **Только софт мониторинга (без профиля видеокарты)** | ⚪ **`Install-MSIAfterburner-Standalone.ps1`** | Чистая установка Afterburner и RTSS без вмешательства в драйверы и разгон. |
-| **Применить андервольт для RTX 5080** | 🟡 **`profiles/Profile-RTX-5080.ps1`** | Накатывает проверенную курву андервольта для RTX 5080 без переустановки софта. |
-| **Применить андервольт для RTX 3060** | 🟠 **`profiles/Profile-RTX-3060.ps1`** | Накатывает проверенную курву андервольта для RTX 3060. |
+A specialized, zero-bloat automation suite for installing, configuring, and optimizing **MSI Afterburner** and **RivaTuner Statistics Server (RTSS)** for competitive gaming and hardware benchmarking.
 
 ---
 
-## 🧭 Интерактивная схема выбора
+## 🎯 Quick Start: 1-Click Interactive Setup
 
-```mermaid
-flowchart TD
-    Start["Запуск настройки мониторинга"] --> Choice{"Какой стиль отображения вам нужен?"}
-    
-    Choice -->|"Детальный: все ядра процессора, клоки, график фреймтайма"| Classic["Install-MSIAfterburner-Classic.ps1\n(Флагманский выбор)"]
-    Choice -->|"Компактный: минимум строк, чисто для киберспорта"| NextGen["Install-MSIAfterburner-NextGen.ps1\n(Стиль NextGen)"]
-    Choice -->|"Только установить софт без разгона и твиков"| Standalone["Install-MSIAfterburner-Standalone.ps1"]
-    
-    Start --> Profiles{"Нужен только профиль видеокарты?"}
-    Profiles -->|"RTX 5080"| P5080["profiles/Profile-RTX-5080.ps1"]
-    Profiles -->|"RTX 3060"| P3060["profiles/Profile-RTX-3060.ps1"]
+Run the master interactive launcher from an elevated PowerShell terminal:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Setup.ps1
+```
+
+```
+========================================================================
+             MSI AFTERBURNER & RTSS AUTOMATED SETUP SUITE               
+========================================================================
+  [1] Esports Minimal OSD (Setup-Esports-OSD.ps1)
+  [2] Detailed Telemetry OSD (Setup-Detailed-OSD.ps1)
+  [3] Base Software Only (Setup-Base-NoOC.ps1)
+  [4] Apply RTX 5080 Undervolt Only (0.950V / 2850MHz)
+  [5] Apply RTX 3060 Undervolt Only (0.875V / 1875MHz)
+  [T] Run Quality Gate Tests (Syntax.Tests.ps1)
+  [Q] Exit
+========================================================================
 ```
 
 ---
 
-## ⌨️ Горячие клавиши (Управление прямо в играх)
+## 📊 Preset Comparison & Workload Fit
 
-| Сочетание клавиш | Назначение | Как это работает |
+| Feature | 🟢 `Setup-Esports-OSD.ps1` *(Esports)* | 🟡 `Setup-Detailed-OSD.ps1` *(Benchmarking)* | ⚪ `Setup-Base-NoOC.ps1` *(Base)* |
+|---|---|---|---|
+| **Primary Goal** | Minimal input latency and clean display for competitive titles (CS2, Apex, Warzone) | Stress-testing, thermal throttling detection, clock stability | Clean software installation without GPU or driver tuning |
+| **OSD Visual Style** | **Compact vertical stack**: FPS, Frametime (ms), 1% Low, 0.1% Low, aggregate CPU/GPU | **Full diagnostic dashboard**: telemetry for **every CPU core** (CPU0..CPU15), VRAM, fans, frametime graph | Standard clean overlay |
+| **Visual Clutter** | **0% clutter**: preserves radar, crosshair, HUD, and chat visibility | High-density telemetry for testers | Standard minimal |
+| **GPU Tuning / Undervolt**| Applies RTX 5080 undervolt (0.950V / 2850MHz) to Profile 1 | Applies RTX 5080 undervolt (0.950V / 2850MHz) to Profile 1 | **Untouched** (safe across all hardware) |
+| **NVIDIA Driver Profile** | Low-latency profile via NPI (Unlimited shader cache, P-State 1, Threaded On) | Low-latency driver profile via NPI | **Untouched** |
+| **Ghost Tray Mode** | ✅ Enabled (`SingleTrayIconMode = 1`) | ✅ Enabled (`SingleTrayIconMode = 1`) | ✅ Enabled (`SingleTrayIconMode = 1`) |
+| **OSD Hotkey** | <kbd>Alt</kbd> + <kbd>1</kbd> | <kbd>Alt</kbd> + <kbd>1</kbd> | <kbd>Alt</kbd> + <kbd>1</kbd> |
+| **Default Display State** | Hidden (`EnableOSD = 0`) | Hidden (`EnableOSD = 0`) | Hidden (`EnableOSD = 0`) |
+
+---
+
+## ⌨️ In-Game Hotkeys
+
+| Hotkey | Action | Mechanics |
 |---|---|---|
-| **<kbd>Alt</kbd> + <kbd>1</kbd>** | **Включить / скрыть оверлей FPS** | По умолчанию экран в игре чистый. Нажали **Alt + 1** — оверлей появился. Нажали ещё раз — исчез. Синхронизировано между Afterburner и RTSS. |
-| **<kbd>Alt</kbd> + <kbd>F1</kbd>** | **Загрузить Профиль 1 (Андервольт)** | Энергоэффективный режим с пониженным нагревом, стабильными частотами и тихой работой вертушек. |
-| **<kbd>Alt</kbd> + <kbd>F2</kbd>** | **Загрузить Профиль 2 (Разгон)** | Режим максимальной производительности для выжимания предельного FPS. |
+| **<kbd>Alt</kbd> + <kbd>1</kbd>** | **Toggle OSD Visibility** | Games start with a clean screen. Pressing **Alt + 1** instantly toggles telemetry. Synchronized between Afterburner and RTSS. |
+| **<kbd>Alt</kbd> + <kbd>F1</kbd>** | **Activate Profile 1 (Undervolt)** | Cool temperatures, silent acoustics, locked maximum boost clocks. |
+| **<kbd>Alt</kbd> + <kbd>F2</kbd>** | **Activate Profile 2 (Overclock / Stock)** | Maximum clock profile for pushing peak frame rates. |
 
 ---
 
-## 🛡️ Ключевые инженерные преимущества этого установщика
+## 🛡️ Engineering Guarantees
 
-1. **Режим «Призрак» (`SingleTrayIconMode = 1`)**:
-   * Синяя иконка RTSS (монитор с цифрой 60) **не засоряет системный трей** Windows.
-   * В трее видна только одна иконка MSI Afterburner.
-   * Оверлей в играх скрыт по умолчанию (`EnableOSD = 0`).
-2. **Молниеносная скорость (Идемпотентность)**:
-   * Если программы уже установлены, скрипт не тратит трафик и время на повторную загрузку 50 МБ и установку.
-   * Повторный запуск скрипта выполняется **всего за 4–5 секунд** вместо 60 секунд.
-3. **Безопасность и автоматические бэкапы**:
-   * Перед любым изменением конфигураций скрипт создаёт бэкап в папке `Backup_ГГГГММДД_ЧЧММСС`.
-   * Штатное завершение процессов (`CloseMainWindow`) перед записью исключает повреждение файлов.
-4. **Профессиональное логирование**:
-   * Подробные отчёты с таймингами каждого шага сохраняются в папку [`Logs/`](./Logs).
-5. **Динамический поиск видеокарты**:
-   * Скрипт сам определяет PCI-ID установленной карты (`VEN_10DE...cfg`), предотвращая сбои на картах разных брендов (Palit, ASUS, MSI, Gigabyte, FE).
+* **Ghost Mode (`SingleTrayIconMode = 1`):** Hides the secondary RTSS blue monitor icon from the taskbar notification area while keeping the background hooking engine active.
+* **Idempotent Speed Engine (< 5s):** Re-runs automatically detect installed binaries, skipping network downloads and repeated installations.
+* **Dynamic Hardware Matching:** Dynamically scans host GPU device IDs (`VEN_10DE...cfg`) rather than hardcoding static vendor strings.
+* **Safety First:** Creates automatic timestamped backups in `Profiles\Backup_YYYYMMDD_HHMMSS` before modifying configurations.
+* **Zero Syntax Errors (AST 0):** Every script passes PowerShell Abstract Syntax Tree validation and enforces standard UTF-8 BOM encoding.
 
 ---
 
-## 📁 Структура репозитория
+## 📂 Project Structure
 
 ```
 msi-afterburner-rtss/
-├── Install-MSIAfterburner-Classic.ps1    # Основной флагманский скрипт (детальный стиль)
-├── Install-MSIAfterburner-NextGen.ps1    # Компактный киберспортивный скрипт
-├── Install-MSIAfterburner-Standalone.ps1 # Модульный установщик чистого софта
-├── README.md                            # Данное руководство
-├── profiles/                            # Отдельные профили курвы и разгона
-│   ├── Profile-RTX-5080.ps1             # Андервольт и частоты для GeForce RTX 5080
-│   └── Profile-RTX-3060.ps1             # Андервольт и частоты для GeForce RTX 3060
-├── tools/                               # Вспомогательные киберспортивные утилиты
-│   ├── nvidiaProfileInspector.exe       # Портативный инспектор профилей NVIDIA
+├── Setup.ps1                  # Interactive 1-click launcher
+├── Setup-Esports-OSD.ps1      # Esports compact OSD configuration
+├── Setup-Detailed-OSD.ps1     # Per-core detailed monitoring configuration
+├── Setup-Base-NoOC.ps1        # Pure software installer (no driver/GPU tweaks)
+├── README.md                  # This documentation (English)
+├── README_RU.md               # Detailed guide (Russian)
+├── AGENTS.md                  # Universal guidelines for AI agents
+├── LICENSE                    # Open source license
+├── profiles/                  # Hardware-specific undervolt profiles
+│   ├── RTX-5080-Undervolt.ps1 # 0.950V / 2850MHz undervolt curve
+│   └── RTX-3060-Undervolt.ps1 # 0.875V / 1875MHz undervolt curve
+├── tools/                     # Portable helper utilities
+│   ├── nvidiaProfileInspector.exe
 │   ├── nvidiaProfileInspector.exe.config
 │   ├── Reference.xml
-│   └── NV-Esports-Ultimate.nip          # Низколатентный профиль драйвера NVIDIA
-└── Logs/                                # Сессионные логи аудита и проверок
+│   └── NV-Esports-Ultimate.nip
+├── tests/                     # Quality assurance & validation
+│   └── Syntax.Tests.ps1       # Automated AST and contract verification
+└── docs/                      # Technical documentation
+    ├── architecture/          # Architecture & ADRs
+    │   ├── ARCHITECTURE.md
+    │   └── DECISIONS.md
+    ├── development/           # Development & contributing guides
+    │   ├── DEVELOPMENT.md
+    │   └── CONTRIBUTING.md
+    ├── guides/                # Support & edge-case workarounds
+    │   ├── KNOWN_ISSUES.md
+    │   └── SUPPORT.md
+    ├── project/               # Project state & historical records
+    │   ├── PROJECT_STATE.md
+    │   ├── CHANGELOG.md
+    │   └── ROADMAP.md
+    └── security/              # Security and privilege management
+        └── SECURITY.md
 ```
 
 ---
 
-## 🚀 Пошаговая инструкция запуска
+## 🧪 Automated Verification
 
-1. Откройте папку `msi-afterburner-rtss` в Проводнике.
-2. Кликните правой кнопкой мыши по **`Install-MSIAfterburner-Classic.ps1`**.
-3. Выберите пункт **«Выполнить с помощью PowerShell»**.
-4. При запросе прав администратора нажмите **«Да»**.
-5. Дождитесь появления зелёного итогового отчёта:
-   ```
-   ==========================================================
-                   ИТОГОВЫЙ ОТЧЁТ УСТАНОВКИ                  
-   ==========================================================
-     Статус MSI Afterburner : Уже установлен / Настроен
-     Процесс Afterburner    : Работает
-     Статус RTSS            : Уже установлен / Настроен
-     Процесс RTSS           : Работает в фоне
-     Иконка RTSS в трее     : СКРЫТА (SingleTrayIconMode = 1)
-     Оверлей по умолчанию   : СКРЫТ (EnableOSD = 0)
-     Горячая клавиша OSD    : Alt + 1 (Синхронизировано)
-     Общее время выполнения : ~4.8 сек
-   ==========================================================
-   ```
+Run the built-in quality gate test suite locally:
 
----
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Syntax.Tests.ps1
+```
 
-## ❓ Часто задаваемые вопросы (FAQ)
-
-<details>
-<summary><b>Куда делся значок RTSS в трее?</b></summary>
-Он скрыт штатной настройкой Afterburner <code>SingleTrayIconMode = 1</code>, чтобы панель задач оставалась чистой. Сам сервер RTSS работает в фоне и ждет нажатия клавиши <b>Alt + 1</b>. Если нужно открыть настройки RTSS вручную — запустите его через ярлык меню «Пуск».
-</details>
-
-<details>
-<summary><b>Почему при старте игры нет оверлея?</b></summary>
-Экран чистый по умолчанию (<code>EnableOSD = 0</code>), чтобы не мешать погружению и не закрывать элементы интерфейса. Чтобы включить оверлей — нажмите <b>Alt + 1</b> в любой момент матча.
-</details>
-
-<details>
-<summary><b>Что делать, если у меня другая видеокарта (не RTX 5080)?</b></summary>
-Скрипт настроит Afterburner и RTSS под любую видеокарту (мониторинг, скрытый трей, Alt+1). Разгон можно настроить вручную в Afterburner или запустить соответствующий профиль из папки <code>profiles/</code> (например, <code>Profile-RTX-3060.ps1</code>).
-</details>
+All 7 scripts are checked for valid Abstract Syntax Trees (0 errors), standard 3-byte UTF-8 BOM headers, and live configuration key contracts.

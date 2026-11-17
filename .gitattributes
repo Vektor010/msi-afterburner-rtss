@@ -1,0 +1,6 @@
+* text=auto eol=crlf
+*.ps1 text eol=crlf
+*.cfg text eol=crlf
+*.nip text eol=crlf
+*.exe binary
+*.dll binary

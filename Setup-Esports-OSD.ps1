@@ -1,89 +1,204 @@
-    If (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator"))
-    {Start-Process PowerShell.exe -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -File `"{0}`"" -f $PSCommandPath) -Verb RunAs
-    Exit}
-    $Host.UI.RawUI.WindowTitle = $myInvocation.MyCommand.Definition + " (Administrator)"
-    $Host.UI.RawUI.BackgroundColor = "Black"
-	$Host.PrivateData.ProgressBackgroundColor = "Black"
-    $Host.PrivateData.ProgressForegroundColor = "White"
-    Clear-Host
+﻿# ==============================================================================
+# MSI Afterburner & RTSS Esports Preset (Compact OSD)
+# Enterprise-Grade Architecture & Fast Idempotent Execution
+# ==============================================================================
 
-    function Get-FileFromWeb {
-    param ([Parameter(Mandatory)][string]$URL, [Parameter(Mandatory)][string]$File)
-    function Show-Progress {
-    param ([Parameter(Mandatory)][Single]$TotalValue, [Parameter(Mandatory)][Single]$CurrentValue, [Parameter(Mandatory)][string]$ProgressText, [Parameter()][int]$BarSize = 10, [Parameter()][switch]$Complete)
-    $percent = $CurrentValue / $TotalValue
-    $percentComplete = $percent * 100
-    if ($psISE) { Write-Progress "$ProgressText" -id 0 -percentComplete $percentComplete }
-    else { Write-Host -NoNewLine "`r$ProgressText $(''.PadRight($BarSize * $percent, [char]9608).PadRight($BarSize, [char]9617)) $($percentComplete.ToString('##0.00').PadLeft(6)) % " }
+# --- 1. ФУНКЦИИ ОКРУЖЕНИЯ, ЛОГИРОВАНИЯ И ВЕРИФИКАЦИИ ---
+$script:InstallTimer = [System.Diagnostics.Stopwatch]::StartNew()
+$script:ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
+$script:LogDir = Join-Path $script:ScriptDir "Logs"
+if (-not (Test-Path $script:LogDir)) { New-Item -Path $script:LogDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null }
+$script:LogFile = Join-Path $script:LogDir ("MsiInstaller_Esports_" + (Get-Date -Format "yyyy-MM-dd_HH-mm-ss") + ".log")
+
+function Write-InstallerLog {
+    param(
+        [Parameter(Mandatory=$true)][ValidateSet("INFO","OK","WARN","ERROR","DEBUG","STEP")][string]$Level,
+        [Parameter(Mandatory=$true)][string]$Action,
+        [Parameter(Mandatory=$true)][string]$Message,
+        [System.Diagnostics.Stopwatch]$Timer = $null
+    )
+    $ts = Get-Date -Format "HH:mm:ss"
+    $dur = if ($Timer) { " [{0:N2}s]" -f ($Timer.ElapsedMilliseconds / 1000) } else { "" }
+    $logLine = "[$ts] [$Level] [$Action] $Message$dur"
+    
+    $color = switch ($Level) {
+        "STEP"  { "Cyan" }
+        "OK"    { "Green" }
+        "INFO"  { "White" }
+        "WARN"  { "Yellow" }
+        "ERROR" { "Red" }
+        "DEBUG" { "DarkGray" }
+        default { "Gray" }
     }
+    Write-Host $logLine -ForegroundColor $color
     try {
-    $request = [System.Net.HttpWebRequest]::Create($URL)
-    $response = $request.GetResponse()
-    if ($response.StatusCode -eq 401 -or $response.StatusCode -eq 403 -or $response.StatusCode -eq 404) { throw "Remote file either doesn't exist, is unauthorized, or is forbidden for '$URL'." }
-    if ($File -match '^\.\\') { $File = Join-Path (Get-Location -PSProvider 'FileSystem') ($File -Split '^\.')[1] }
-    if ($File -and !(Split-Path $File)) { $File = Join-Path (Get-Location -PSProvider 'FileSystem') $File }
-    if ($File) { $fileDirectory = $([System.IO.Path]::GetDirectoryName($File)); if (!(Test-Path($fileDirectory))) { [System.IO.Directory]::CreateDirectory($fileDirectory) | Out-Null } }
-    [long]$fullSize = $response.ContentLength
-    [byte[]]$buffer = new-object byte[] 1048576
-    [long]$total = [long]$count = 0
-    $reader = $response.GetResponseStream()
-    $writer = new-object System.IO.FileStream $File, 'Create'
-    do {
-    $count = $reader.Read($buffer, 0, $buffer.Length)
-    $writer.Write($buffer, 0, $count)
-    $total += $count
-    if ($fullSize -gt 0) { Show-Progress -TotalValue $fullSize -CurrentValue $total -ProgressText " $($File.Name)" }
-    } while ($count -gt 0)
-    }
-    finally {
-    $reader.Close()
-    $writer.Close()
-    }
-    }
-
-Write-Host "Installing: MSI Afterburner. Please wait . . ."
-Write-Host ""
-Write-Host "GPU 'Power' & 'Power Percent' disabled." -ForegroundColor Red
-Write-Host "This causes FPS and 1% low issues enabled." -ForegroundColor Red
-# download msi afterburner
-Get-FileFromWeb -URL "https://github.com/FR33THYFR33THY/files/raw/main/MSI Afterburner.exe" -File "$env:TEMP\MSI Afterburner.exe"
-# install msi afterburner
-Start-Process -wait "$env:TEMP\MSI Afterburner.exe" -ArgumentList "/S"
-# --- НАСТРОЙКА ГЛАВНОГО КОНФИГА (МАСШТАБ КУРВЫ ДЛЯ 5080) ---
-$CfgPath = "$env:SystemDrive\Program Files (x86)\MSI Afterburner\MSIAfterburner.cfg"
-
-# Ждем появления файла (на всякий случай)
-while (!(Test-Path $CfgPath)) { Start-Sleep -Seconds 1 }
-
-$Content = [System.Collections.Generic.List[string]](Get-Content $CfgPath)
-$Settings = @{
-    "VFCurveEditorMinFrequency" = "100"
-    "VFCurveEditorMaxFrequency" = "4000"
-    "VFCurveEditorMinVoltage"   = "400"
+        [System.IO.File]::AppendAllText($script:LogFile, "$logLine`r`n", [System.Text.Encoding]::UTF8)
+    } catch {}
 }
 
-foreach ($Key in $Settings.Keys) {
-    $Pattern = "^\s*$Key\s*=.*"
-    $Found = $false
-    for ($i = 0; $i -lt $Content.Count; $i++) {
-        if ($Content[$i] -match $Pattern) {
-            $Content[$i] = "$Key = $($Settings[$Key])"
-            $Found = $true
-            break
+function Show-InstallerProgress {
+    param([int]$Step, [int]$TotalSteps, [string]$Activity)
+    $pct = [math]::Round(($Step / $TotalSteps) * 100)
+    Write-InstallerLog -Level "STEP" -Action ("[{0}/{1}] ({2}%)" -f $Step, $TotalSteps, $pct) -Message $Activity
+}
+
+function Test-AdministratorPrivileges {
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")
+    if (-not $isAdmin) {
+        $realPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { "$script:ScriptDir\Setup-Esports-OSD.ps1" }
+        Write-InstallerLog -Level "WARN" -Action "UAC" -Message "Требуются права Администратора. Перезапуск процесса с повышением прав..."
+        Start-Process PowerShell.exe -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -File `"{0}`"" -f $realPath) -Verb RunAs
+        Exit
+    }
+    Write-InstallerLog -Level "OK" -Action "UAC" -Message "Права Администратора подтверждены."
+}
+
+function Stop-ComponentGraceful {
+    param([string[]]$ProcessNames, [int]$TimeoutMs = 2500)
+    foreach ($pName in $ProcessNames) {
+        $procs = Get-Process -Name $pName -ErrorAction SilentlyContinue
+        foreach ($proc in $procs) {
+            Write-InstallerLog -Level "INFO" -Action "Process" -Message "Отправка запроса на штатное закрытие процесса $pName (PID: $($proc.Id))..."
+            $proc.CloseMainWindow() | Out-Null
         }
     }
-    if (-not $Found) {
-        # Вставляем сразу после [Settings]
-        $Index = $Content.IndexOf("[Settings]")
-        if ($Index -ne -1) { $Content.Insert($Index + 1, "$Key = $($Settings[$Key])") }
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
+        $alive = Get-Process -Name $ProcessNames -ErrorAction SilentlyContinue
+        if (-not $alive) {
+            Write-InstallerLog -Level "OK" -Action "Process" -Message "Все процессы успешно остановлены штатно." -Timer $sw
+            return
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    $stillAlive = Get-Process -Name $ProcessNames -ErrorAction SilentlyContinue
+    if ($stillAlive) {
+        Write-InstallerLog -Level "WARN" -Action "Process" -Message "Процессы не ответили на штатное закрытие. Принудительное завершение..."
+        $stillAlive | Stop-Process -Force -ErrorAction SilentlyContinue
+        Write-InstallerLog -Level "OK" -Action "Process" -Message "Процессы принудительно остановлены."
     }
 }
-Set-Content -Path $CfgPath -Value $Content -Force
-# -------------------------------------------------------------
-# new folder
-New-Item -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner" -Name "Profiles" -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
-# create config for msi afterburner
-$MultilineComment = @"
+
+function Backup-ConfigurationFiles {
+    param([string]$SourceDir, [string]$BackupDir)
+    if (Test-Path $SourceDir) {
+        New-Item -Path $BackupDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+        $cfgFiles = Get-ChildItem -Path $SourceDir -Filter "*.cfg" -ErrorAction SilentlyContinue
+        foreach ($f in $cfgFiles) {
+            Copy-Item -Path $f.FullName -Destination $BackupDir -Force -ErrorAction SilentlyContinue
+        }
+        Write-InstallerLog -Level "OK" -Action "Backup" -Message "Резервная копия ($($cfgFiles.Count) файлов) сохранена в: $BackupDir"
+    }
+}
+
+# --- 2. ИНИЦИАЛИЗАЦИЯ И ПРОВЕРКА ПРАВ ---
+$Host.UI.RawUI.WindowTitle = "MSI Afterburner + RTSS Esports Preset [Administrator]"
+$Host.UI.RawUI.BackgroundColor = "Black"
+$Host.PrivateData.ProgressBackgroundColor = "Black"
+$Host.PrivateData.ProgressForegroundColor = "White"
+Clear-Host
+
+$progresspreference = 'silentlycontinue'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+Write-Host "==========================================================" -ForegroundColor DarkCyan
+Write-Host "   MSI Afterburner & RTSS: Компактный киберспортивный OSD  " -ForegroundColor Cyan
+Write-Host "==========================================================" -ForegroundColor DarkCyan
+Write-InstallerLog -Level "INFO" -Action "Init" -Message "Сессия логирования запущена: $script:LogFile"
+
+Show-InstallerProgress -Step 1 -TotalSteps 8 -Activity "Проверка прав администратора и окружения"
+Test-AdministratorPrivileges
+
+# --- 3. ПРОВЕРКА СУЩЕСТВУЮЩИХ КОМПОНЕНТОВ (ИДЕМПОТЕНТНОСТЬ) ---
+Show-InstallerProgress -Step 2 -TotalSteps 8 -Activity "Проверка установленных версий MSI Afterburner и RTSS"
+$MsiDir = "$env:SystemDrive\Program Files (x86)\MSI Afterburner"
+$RtssDir = "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server"
+$MsiExe = "$MsiDir\MSIAfterburner.exe"
+$RtssExe = "$RtssDir\RTSS.exe"
+
+$isMsiInstalled = Test-Path $MsiExe
+$isRtssInstalled = Test-Path $RtssExe
+
+if ($isMsiInstalled -and $isRtssInstalled) {
+    Write-InstallerLog -Level "OK" -Action "Check" -Message "MSI Afterburner и RTSS уже установлены на данном ПК. Пропуск сетевой загрузки и повторной инсталляции."
+} else {
+    Show-InstallerProgress -Step 3 -TotalSteps 8 -Activity "Загрузка и тихая установка компонентов"
+    Write-InstallerLog -Level "INFO" -Action "Download" -Message "Требуется установка. Проверка сетевого подключения..."
+    if (!(Test-Connection -ComputerName "8.8.8.8" -Count 1 -Quiet -ErrorAction SilentlyContinue) -and !([System.Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable())) {
+        Write-InstallerLog -Level "ERROR" -Action "Network" -Message "Сетевое подключение отсутствует. Установка невозможна."
+        Pause
+        exit
+    }
+    
+    $AbZip = "$env:TEMP\msiafterburner467.zip"
+    $AbDir = "$env:TEMP\msiafterburner467"
+    $dlTimer = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        Write-InstallerLog -Level "INFO" -Action "Download" -Message "Скачивание MSI Afterburner 4.6.7 Beta 2 с официального сервера MSI..."
+        Invoke-WebRequest -Uri "https://download.msi.com/uti_exe/vga/MSIAfterburnerSetup467Beta2.zip" -OutFile $AbZip -UseBasicParsing -ErrorAction Stop
+        Expand-Archive -Path $AbZip -DestinationPath $AbDir -Force
+        $WrapperExe = (Get-ChildItem -Path $AbDir -Filter "*.exe" -Recurse | Select-Object -First 1).FullName
+        $asm = [System.Reflection.Assembly]::Load([System.IO.File]::ReadAllBytes($WrapperExe))
+        $rm = New-Object System.Resources.ResourceManager("MSIAfterburnerSetup.Properties.Resources", $asm)
+        $innerBytes = $rm.GetObject("MSIAfterburnerSetupFile")
+        $innerZip = "$AbDir\inner.zip"
+        [System.IO.File]::WriteAllBytes($innerZip, $innerBytes)
+        Expand-Archive -Path $innerZip -DestinationPath "$AbDir\real" -Force
+        $AbSetup = (Get-ChildItem -Path "$AbDir\real" -Filter "*.exe" | Select-Object -First 1).FullName
+        Write-InstallerLog -Level "OK" -Action "Download" -Message "Дистрибутив успешно получен и распакован." -Timer $dlTimer
+    } catch {
+        Write-InstallerLog -Level "WARN" -Action "Download" -Message "Основной сервер MSI недоступен ($($_.Exception.Message)). Загрузка резервного релиза..."
+        $AbSetup = "$env:TEMP\msiafterburner.exe"
+        Invoke-WebRequest -Uri "https://github.com/FR33THYFR33THY/Ultimate/releases/download/Files/msiafterburner.exe" -OutFile $AbSetup -UseBasicParsing
+        Write-InstallerLog -Level "OK" -Action "Download" -Message "Резервный дистрибутив загружен." -Timer $dlTimer
+    }
+
+    if (!$AbSetup -or !(Test-Path $AbSetup)) {
+        Write-InstallerLog -Level "ERROR" -Action "Install" -Message "Не удалось получить установщик MSI Afterburner!"
+        Pause
+        exit
+    }
+
+    Stop-ComponentGraceful -ProcessNames @("MSIAfterburner", "RTSS")
+
+    Write-InstallerLog -Level "INFO" -Action "Install" -Message "Тихая установка MSI Afterburner и RivaTuner с блокировкой сетевых загрузок..."
+    $ifeo = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+    $redistList = @("dxwebsetup.exe", "VCRedistWebSetup.exe", "vc_redist.x86.exe", "vc_redist.x64.exe")
+    foreach ($exe in $redistList) {
+        New-Item -Path "$ifeo\$exe" -Force | Out-Null
+        Set-ItemProperty -Path "$ifeo\$exe" -Name "Debugger" -Value "rundll32.exe"
+    }
+    try {
+        Start-Process -FilePath $AbSetup -ArgumentList "/S" -WindowStyle Hidden -Wait
+        $rtssSetup = "$MsiDir\Redist\RTSSSetup.exe"
+        if (Test-Path $rtssSetup) {
+            Start-Process -FilePath $rtssSetup -ArgumentList "/S" -WindowStyle Hidden -Wait
+        }
+    } finally {
+        foreach ($exe in $redistList) {
+            Remove-Item -Path "$ifeo\$exe" -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Write-InstallerLog -Level "OK" -Action "Install" -Message "Установка программных пакетов завершена."
+    Remove-Item -Path $AbZip -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $AbDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "$env:TEMP\msiafterburner.exe" -Force -ErrorAction SilentlyContinue
+}
+
+# --- 4. СОХРАНЕНИЕ БЭКАПОВ ПЕРЕД НАСТРОЙКОЙ ---
+Show-InstallerProgress -Step 4 -TotalSteps 8 -Activity "Создание резервных копий текущих конфигураций"
+Stop-ComponentGraceful -ProcessNames @("MSIAfterburner", "RTSS")
+$backupTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$msiBackupDir = Join-Path $MsiDir "Profiles\Backup_$backupTimestamp"
+$rtssBackupDir = Join-Path $RtssDir "Profiles\Backup_$backupTimestamp"
+Backup-ConfigurationFiles -SourceDir "$MsiDir\Profiles" -BackupDir $msiBackupDir
+Backup-ConfigurationFiles -SourceDir "$RtssDir\Profiles" -BackupDir $rtssBackupDir
+
+Show-InstallerProgress -Step 5 -TotalSteps 8 -Activity "Применение конфигураций MSI Afterburner (SingleTrayIconMode, Hotkeys)"
+New-Item -Path "$MsiDir\Profiles" -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
+
+# 1. Настройка мониторинга msiafterburner.cfg (Компактный вертикальный NextGen: 5080 + 9800x3D)
+$MsiAfterBurnerCfg = @"
 [Settings]
 VFCurveEditorMinFrequency=100
 VFCurveEditorMaxFrequency=4000
@@ -108,6 +223,7 @@ RememberSettings=1
 FirstRun=0
 FirstUserDefineClick=1
 FirstServerRun=0
+EnableServer=1
 CurrentGpu=0
 Sync=1
 Link=1
@@ -116,12 +232,12 @@ FanSync=1
 CurrentFan=0
 ShowOSDTime=0
 CaptureOSD=0
-Profile1Hotkey=0004007Ah
-Profile2Hotkey=0004007Bh
+Profile1Hotkey=00040070h
+Profile2Hotkey=00040071h
 Profile3Hotkey=00000000h
 Profile4Hotkey=00000000h
 Profile5Hotkey=00000000h
-OSDToggleHotkey=00080021h
+OSDToggleHotkey=00040031h
 OSDOnHotkey=00000000h
 OSDOffHotkey=00000000h
 OSDServerBlockHotkey=00000000h
@@ -164,8 +280,8 @@ Profile3D=-1
 SwAutoFanControl=1
 SwAutoFanControlFlags=00000004h
 SwAutoFanControlPeriod=5000
-SwAutoFanControlCurve=0000010005000000000000000000204200000000000020420000204200004842000048420000A0420000A0420000B4420000C842000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-SwAutoFanControlCurve2=0000010004000000000000000000F0410000204200004842000048420000A0420000A0420000B4420000C8420000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+SwAutoFanControlCurve=0000010005000000000000000000204200000000000020420000204200004842000048420000A0420000A0420000B4420000C84200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+SwAutoFanControlCurve2=0000010004000000000000000000F0410000204200004842000048420000A0420000A0420000B4420000C8420000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 RestoreAfterSuspendedMode=1
 PauseMonitoring=0
 ShowPerformanceProfilerStatus=0
@@ -182,11 +298,11 @@ UnlockVoltageControl=1
 UnlockVoltageMonitoring=1
 OEM=0
 ForceConstantVoltage=0
-SingleTrayIconMode=0
+SingleTrayIconMode=1
 Fahrenheit=0
 Time24=1
 LCDGraph=0
-Sources=+GPU temperature,+GPU usage,+Framerate,+Frametime,+Core clock,+GPU voltage,+Power,+Memory clock,+Memory usage,+Fan tachometer,+Fan tachometer 2,+CPU usage,+CPU temperature,+CPU clock,+CPU voltage,+CPU power,+RAM usage,+Memory usage \ process,+RAM usage \ process,+FB usage,+VID usage,+BUS usage,-Power percent,+Fan speed,+Fan speed 2,+Temp limit,+Power limit,+Voltage limit,+No load limit,+CPU1 temperature,+CPU2 temperature,+CPU3 temperature,+CPU4 temperature,+CPU5 temperature,+CPU6 temperature,+CPU7 temperature,+CPU8 temperature,+CPU9 temperature,+CPU10 temperature,+CPU11 temperature,+CPU12 temperature,+CPU13 temperature,+CPU14 temperature,+CPU15 temperature,+CPU16 temperature,+CPU1 usage,+CPU2 usage,+CPU3 usage,+CPU4 usage,+CPU5 usage,+CPU6 usage,+CPU7 usage,+CPU8 usage,+CPU9 usage,+CPU10 usage,+CPU11 usage,+CPU12 usage,+CPU13 usage,+CPU14 usage,+CPU15 usage,+CPU16 usage,+CPU1 clock,+CPU2 clock,+CPU3 clock,+CPU4 clock,+CPU5 clock,+CPU6 clock,+CPU7 clock,+CPU8 clock,+CPU9 clock,+CPU10 clock,+CPU11 clock,+CPU12 clock,+CPU13 clock,+CPU14 clock,+CPU15 clock,+CPU16 clock,+CPU1 power,+CPU2 power,+CPU3 power,+CPU4 power,+CPU5 power,+CPU6 power,+CPU7 power,+CPU8 power,+CPU9 power,+CPU10 power,+CPU11 power,+CPU12 power,+CPU13 power,+CPU14 power,+CPU15 power,+CPU16 power,+Commit charge,-Framerate Min,-Framerate Avg,-Framerate Max,-Framerate 1% Low,-Framerate 0.1% Low,+Motherboard temperature,+CPU fan speed,+PSU +3.3V voltage,+PSU +5V voltage,+PSU +12V voltage,+UPS load,+UPS power,+UPS voltage,+UPS charge level
+Sources=+GPU temperature,+GPU usage,+Framerate,+Frametime,+Core clock,+GPU voltage,+Power,+Memory clock,+Memory usage,+Fan tachometer,+Fan tachometer 2,+CPU usage,+CPU temperature,+CPU clock,+CPU voltage,+CPU power,+RAM usage,+Memory usage \ process,+RAM usage \ process,+FB usage,+VID usage,+BUS usage,-Power percent,+Fan speed,+Fan speed 2,+Temp limit,+Power limit,+Voltage limit,+No load limit,+Commit charge,-Framerate Min,-Framerate Avg,-Framerate Max,-Framerate 1% Low,-Framerate 0.1% Low
 LayeredWindowMode=1
 LayeredWindowAlpha=255
 ScaleFactor=100
@@ -201,6 +317,11 @@ UnofficialOverclockingDrvReset=1
 UnifiedActivityMonitoring=0
 EraseStartupSettings=0
 [OSDLayout3]
+PrologSeparator			= "\n<C4><S2><FR><S><C>\n"
+EpilogSeparator			=
+GraphWidth			= -16
+GraphHeight			= -2
+GraphLabel			= 0
 FormatHeader=<C0=00FF00><C1=FF0000><C2=FFFFFF><C3=FF0000><C4=FFFFFF><C5=80000000><C6=80FFFFFF><C250=FF8000><A0=-4><A1=5><S0=-50><S1=50><S2=200>
 ValueAlignmentTag=<A0>;<A>:70,71,72,74,75;<A0>\r:50,51,52,53,54,55,56
 UnitsAlignmentTag=<A1>
@@ -212,45 +333,7 @@ GraphColorTag=<C0>;<C1>:80,90,91,92,93,A0,F1,F2,F3,F4,F5,F6,F7,FF,100;<C2>:50,51
 GroupSizeTag=
 IndexSizeTag=<S0>
 ValueSizeTag=<S1>:70,71,72,74,75
-UnitsSizeTag=<S1>
-GraphSizeTag=<S1>
-PrologSeparator="<A><C><C4><S2><FR><S><C>"
-Prolog0Separator="\n"
-Prolog1Separator="\n"
-Prolog2Separator="\n"
-GroupDataSeparator=" "
-GroupNameSeparator="\t "
-EpilogSeparator=""
-GroupSeparator=\n:90,50,51;:80,A0
-GraphSeparator=
-GraphWidth=-14
-GraphWidthEmbedded=-4
-GraphHeight=-2
-GraphMargin=1
-GraphStyle=0;2:30,90,52,53,54,55,56
-GraphLabel=0
-GraphPlacement=2;1:30,90;0:50,51,52,53,54,55,56
-[Source Framerate]
-ShowInOSD=0
-ShowInLCD=0
-ShowInTray=0
-AlarmThresholdMin=
-AlarmThresholdMax=
-AlarmFlags=0
-AlarmTimeout=5000
-AlarmApp=
-AlarmAppCmdLine=
-EnableDataFiltering=0
-MaxLimit=200
-MinLimit=0
-Group=
-Name=
-TrayTextColor=FF0000h
-TrayIconType=0
-OSDItemType=0
-GraphColor=00FF00h
-Formula=
-[Source Frametime]
+[Source GPU temperature]
 ShowInOSD=1
 ShowInLCD=0
 ShowInTray=0
@@ -261,13 +344,10 @@ AlarmTimeout=5000
 AlarmApp=
 AlarmAppCmdLine=
 EnableDataFiltering=0
-MaxLimit=50.0
-MinLimit=0.0
-Group=
+Group=TEMP.
 Name=
-TrayTextColor=FFFF00h
 TrayIconType=0
-OSDItemType=1
+OSDItemType=0
 GraphColor=00FF00h
 Formula=
 [Source GPU usage]
@@ -281,31 +361,8 @@ AlarmTimeout=5000
 AlarmApp=
 AlarmAppCmdLine=
 EnableDataFiltering=0
-MaxLimit=100
-MinLimit=0
 Group=5080
 Name=
-TrayTextColor=FF0000h
-TrayIconType=0
-OSDItemType=0
-GraphColor=00FF00h
-Formula=
-[Source GPU temperature]
-ShowInOSD=1
-ShowInLCD=0
-ShowInTray=0
-AlarmThresholdMin=
-AlarmThresholdMax=
-AlarmFlags=0
-AlarmTimeout=5000
-AlarmApp=
-AlarmAppCmdLine=
-EnableDataFiltering=0
-MaxLimit=100
-MinLimit=0
-Group=TEMP.
-Name=
-TrayTextColor=FF0000h
 TrayIconType=0
 OSDItemType=0
 GraphColor=00FF00h
@@ -321,51 +378,8 @@ AlarmTimeout=5000
 AlarmApp=
 AlarmAppCmdLine=
 EnableDataFiltering=0
-MaxLimit=2500
-MinLimit=0
 Group=CLOCK
 Name=
-TrayTextColor=FF0000h
-TrayIconType=0
-OSDItemType=0
-GraphColor=00FF00h
-Formula=
-[Source GPU voltage]
-ShowInOSD=1
-ShowInLCD=0
-ShowInTray=0
-AlarmThresholdMin=
-AlarmThresholdMax=
-AlarmFlags=0
-AlarmTimeout=5000
-AlarmApp=
-AlarmAppCmdLine=
-EnableDataFiltering=0
-MaxLimit=2.000
-MinLimit=0.000
-Group=VOLT.
-Name=
-TrayTextColor=FF0000h
-TrayIconType=0
-OSDItemType=0
-GraphColor=00FF00h
-Formula=
-[Source Power]
-ShowInOSD=1
-ShowInLCD=0
-ShowInTray=0
-AlarmThresholdMin=
-AlarmThresholdMax=
-AlarmFlags=0
-AlarmTimeout=5000
-AlarmApp=
-AlarmAppCmdLine=
-EnableDataFiltering=0
-MaxLimit=300.0
-MinLimit=0.0
-Group=POWER
-Name=
-TrayTextColor=FF0000h
 TrayIconType=0
 OSDItemType=0
 GraphColor=00FF00h
@@ -381,16 +395,13 @@ AlarmTimeout=5000
 AlarmApp=
 AlarmAppCmdLine=
 EnableDataFiltering=0
-MaxLimit=7500
-MinLimit=0
 Group=M.CLOCK
 Name=
-TrayTextColor=FF0000h
 TrayIconType=0
 OSDItemType=0
 GraphColor=00FF00h
 Formula=
-[Source Memory usage]
+[Source Power]
 ShowInOSD=1
 ShowInLCD=0
 ShowInTray=0
@@ -401,11 +412,25 @@ AlarmTimeout=5000
 AlarmApp=
 AlarmAppCmdLine=
 EnableDataFiltering=0
-MaxLimit=8192
-MinLimit=0
-Group=VRAM
+Group=POWER
 Name=
-TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source GPU voltage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+Group=VOLT.
+Name=
 TrayIconType=0
 OSDItemType=0
 GraphColor=00FF00h
@@ -421,11 +446,8 @@ AlarmTimeout=5000
 AlarmApp=
 AlarmAppCmdLine=
 EnableDataFiltering=0
-MaxLimit=100
-MinLimit=0
-Group=\nRPM1
+Group=RPM1
 Name=
-TrayTextColor=FF0000h
 TrayIconType=0
 OSDItemType=0
 GraphColor=00FF00h
@@ -441,31 +463,8 @@ AlarmTimeout=5000
 AlarmApp=
 AlarmAppCmdLine=
 EnableDataFiltering=0
-MaxLimit=100
-MinLimit=0
 Group=RPM2
 Name=
-TrayTextColor=FF0000h
-TrayIconType=0
-OSDItemType=0
-GraphColor=00FF00h
-Formula=
-[Source CPU usage]
-ShowInOSD=1
-ShowInLCD=0
-ShowInTray=0
-AlarmThresholdMin=
-AlarmThresholdMax=
-AlarmFlags=0
-AlarmTimeout=5000
-AlarmApp=
-AlarmAppCmdLine=
-EnableDataFiltering=0
-MaxLimit=100
-MinLimit=0
-Group=\n9800x3D
-Name=
-TrayTextColor=FF0000h
 TrayIconType=0
 OSDItemType=0
 GraphColor=00FF00h
@@ -481,11 +480,25 @@ AlarmTimeout=5000
 AlarmApp=
 AlarmAppCmdLine=
 EnableDataFiltering=0
-MaxLimit=100
-MinLimit=0
 Group=TEMP.
 Name=
-TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source CPU usage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+Group=9800x3D
+Name=
 TrayIconType=0
 OSDItemType=0
 GraphColor=00FF00h
@@ -501,31 +514,8 @@ AlarmTimeout=5000
 AlarmApp=
 AlarmAppCmdLine=
 EnableDataFiltering=0
-MaxLimit=5000
-MinLimit=0
 Group=CLOCK
 Name=
-TrayTextColor=FF0000h
-TrayIconType=0
-OSDItemType=0
-GraphColor=00FF00h
-Formula=
-[Source CPU voltage]
-ShowInOSD=1
-ShowInLCD=0
-ShowInTray=0
-AlarmThresholdMin=
-AlarmThresholdMax=
-AlarmFlags=0
-AlarmTimeout=5000
-AlarmApp=
-AlarmAppCmdLine=
-EnableDataFiltering=0
-MaxLimit=2.000
-MinLimit=0.000
-Group=VOLT.
-Name=
-TrayTextColor=FF0000h
 TrayIconType=0
 OSDItemType=0
 GraphColor=00FF00h
@@ -541,11 +531,8 @@ AlarmTimeout=5000
 AlarmApp=
 AlarmAppCmdLine=
 EnableDataFiltering=0
-MaxLimit=200.0
-MinLimit=0.0
 Group=POWER
 Name=
-TrayTextColor=FF0000h
 TrayIconType=0
 OSDItemType=0
 GraphColor=00FF00h
@@ -561,11 +548,25 @@ AlarmTimeout=5000
 AlarmApp=
 AlarmAppCmdLine=
 EnableDataFiltering=0
-MaxLimit=16384
-MinLimit=0
 Group=RAM
 Name=
-TrayTextColor=FF0000h
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source Memory usage]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+Group=VRAM
+Name=
 TrayIconType=0
 OSDItemType=0
 GraphColor=00FF00h
@@ -574,11 +575,15 @@ Formula=
 ShowInOSD=1
 ShowInLCD=0
 ShowInTray=0
-Group=\nV.MEM
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+Group=V.MEM
 Name=
-MaxLimit=8192
-MinLimit=0
-TrayTextColor=FF0000h
 TrayIconType=0
 OSDItemType=0
 GraphColor=00FF00h
@@ -587,24 +592,63 @@ Formula=
 ShowInOSD=1
 ShowInLCD=0
 ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
 Group=R.MEM
 Name=
-MaxLimit=16384
-MinLimit=0
-TrayTextColor=FF0000h
 TrayIconType=0
 OSDItemType=0
 GraphColor=00FF00h
 Formula=
+[Source Framerate]
+ShowInOSD=0
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+Group=
+Name=
+TrayIconType=0
+OSDItemType=0
+GraphColor=00FF00h
+Formula=
+[Source Frametime]
+ShowInOSD=1
+ShowInLCD=0
+ShowInTray=0
+AlarmThresholdMin=
+AlarmThresholdMax=
+AlarmFlags=0
+AlarmTimeout=5000
+AlarmApp=
+AlarmAppCmdLine=
+EnableDataFiltering=0
+Group=
+Name=
+TrayIconType=0
+OSDItemType=1
+GraphColor=00FF00h
+Formula=
 [Monitoring]
 HwInfo.dll=1
-
 "@
-Set-Content -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\MSIAfterburner.cfg" -Value $MultilineComment -Force
-# --- НАЧАЛО БЛОКА РАЗГОНА (RTX 3060) ---
+Set-Content -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\MSIAfterburner.cfg" -Value $MsiAfterBurnerCfg -Force
+
+# --- НАЧАЛО БЛОКА РАЗГОНА (RTX 5080) ---
 
 # 1. Записываем файл настроек видеокарты (Частоты, Курва, Лимиты)
-$MyGpuFileName = "VEN_10DE&DEV_2C02&SUBSYS_176219DA&REV_A1&BUS_1&DEV_0&FN_0.cfg"
+$existingGpuCfg = Get-ChildItem -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\VEN_*.cfg" -ErrorAction SilentlyContinue | Select-Object -First 1
+$MyGpuFileName = if ($existingGpuCfg) { $existingGpuCfg.Name } else { "VEN_10DE&DEV_2C02&SUBSYS_176219DA&REV_A1&BUS_1&DEV_0&FN_0.cfg" }
 $MyGpuProfileContent = @"
 [Defaults]
 Format=2
@@ -657,85 +701,89 @@ FanSpeed2=
 "@
 Set-Content -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\$MyGpuFileName" -Value $MyGpuProfileContent -Force
 
-# 2. Активируем кнопку "Профиль 1" (без этого она будет серой)
-$Profile1Content = @"
+# 2. Активируем кнопки "Профиль 1" и "Профиль 2" (без этого они будут серыми)
+$ProfileSlotContent = @"
 [Settings]
 ProfileContents=1
 "@
-Set-Content -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\Profile1.cfg" -Value $Profile1Content -Force
+Set-Content -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\Profile1.cfg" -Value $ProfileSlotContent -Force
+Set-Content -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\Profile2.cfg" -Value $ProfileSlotContent -Force
 
 # --- КОНЕЦ БЛОКА ВНЕДРЕНИЯ РАЗГОНА ---
-# new folder
+
+# ---------- 3. НАСТРОЙКИ RTSS (RIVATUNER) ----------
+Show-InstallerProgress -Step 6 -TotalSteps 8 -Activity "Применение конфигураций RTSS (EnableOSD, HotkeyHandler)"
 New-Item -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server" -Name "Profiles" -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
-# create config for rivatuner statistics server
-$MultilineComment = @"
+
+# 3.1. Файл Config (кэш хуков)
+$Config = @"
 [FnOffsetCache64]
 OS=6.2 Build 9200
-DDRAW.DLL=0009A000 6C574D34
+DDRAW.DLL=0009A000 DBDAF4DF 01
 IDirectDrawSurface7::Flip=0002D5F0
-D3D9.DLL=001AC180 045B8775
-IDirect3DDevice9::Present=000B9A70
-IDirect3DDevice9::Release=00040030
-IDirect3DDevice9::Reset=000B9D80
-IDirect3DSwapChain9::Present=0005AE10
-IDirect3DDevice9Ex::PresentEx=00012090
-IDirect3DDevice9Ex::ResetEx=000B9E80
-DXGI.DLL=0012CFB0 0011B835
-IDXGISwapChain::Present=00002A20
-IDXGISwapChain::ResizeBuffers=00040CD0
-IDXGISwapChain::Release=00034320
-IDXGISwapChain1::Present1=00002EC0
-IDXGIFactory::CreateSwapChain=0005A540
-IDXGIFactory2::CreateSwapChainForHwnd=0001D930
-IDXGIFactory2::CreateSwapChainForCoreWindow=0008F2A0
-kernel32.dll=000CA218 38F2A778
-LoadLibraryA=00042D80
-LoadLibraryW=0003F7C0
+D3D9.DLL=001B3298 8E1F38C0 01
+IDirect3DDevice9::Present=00061C40
+IDirect3DDevice9::Release=00013810
+IDirect3DDevice9::Reset=000E0E70
+IDirect3DSwapChain9::Present=000818C0
+IDirect3DDevice9Ex::PresentEx=0001C6F0
+IDirect3DDevice9Ex::ResetEx=000284F0
+DXGI.DLL=0013F260 E47E62D7 01
+IDXGISwapChain::Present=0000D9F0
+IDXGISwapChain::ResizeBuffers=00039D40
+IDXGISwapChain::Release=00034030
+IDXGISwapChain1::Present1=0000DE90
+IDXGIFactory::CreateSwapChain=00032180
+IDXGIFactory2::CreateSwapChainForHwnd=000309E0
+IDXGIFactory2::CreateSwapChainForCoreWindow=00091720
+kernel32.dll=000CC288 3B3A2518 01
+LoadLibraryA=00042CD0
+LoadLibraryW=0003F710
 Version=0000000A
 D3D12.DLL=0001C9E0 E3291474
-ID3D12CommandQueue::ExecuteCommandLists=00026A20
-IDXGISwapChain3::ResizeBuffers1=00097E70
-IDXGISwapChain::SetFullscreenState=000414D0
-D3D12Core.DLL=00272D10 606F3462
+ID3D12CommandQueue::ExecuteCommandLists=00009470
+IDXGISwapChain3::ResizeBuffers1=0009B480
+IDXGISwapChain::SetFullscreenState=0003A530
+D3D12Core.DLL=00358D50 51F39C26 01
 IDXGISwapChain1::m_pCommandQueue=00000138
 [FnOffsetCache]
 OS=6.2 Build 9200
-DDRAW.DLL=00083C00 DA66E348
+DDRAW.DLL=00083C00 4E70C42F 01
 IDirectDrawSurface7::Flip=00037C50
-D3D8.DLL=000B4000 032E80FD
+D3D8.DLL=000B4000 3110F6B8 01
 IDirect3DDevice8::Present=0002A1E0
 IDirect3DDevice8::Release=00029800
 IDirect3DDevice8::Reset=00029DC0
-D3D9.DLL=00179EE0 7451B2C1
-IDirect3DDevice9::Present=000E58D0
-IDirect3DDevice9::Release=000658D0
-IDirect3DDevice9::Reset=000E5CD0
-IDirect3DSwapChain9::Present=00043DE0
-IDirect3DDevice9Ex::PresentEx=000E5960
-IDirect3DDevice9Ex::ResetEx=000E5DD0
-DXGI.DLL=000F64B0 20EC2F73
-IDXGISwapChain::Present=000A4810
-IDXGISwapChain::ResizeBuffers=00024600
-IDXGISwapChain::Release=000489C0
-IDXGISwapChain1::Present1=00043FE0
-IDXGIFactory::CreateSwapChain=0009B810
-IDXGIFactory2::CreateSwapChainForHwnd=0009BEE0
-IDXGIFactory2::CreateSwapChainForCoreWindow=0009BD60
-kernel32.dll=000A5CF0 C88BD03F
-LoadLibraryA=00031100
+D3D9.DLL=00176CB8 34C44A39 01
+IDirect3DDevice9::Present=000E2020
+IDirect3DDevice9::Release=000659E0
+IDirect3DDevice9::Reset=000E2420
+IDirect3DSwapChain9::Present=00043E30
+IDirect3DDevice9Ex::PresentEx=000E20B0
+IDirect3DDevice9Ex::ResetEx=000E2520
+DXGI.DLL=00106128 C1FF6A7F 01
+IDXGISwapChain::Present=000B2050
+IDXGISwapChain::ResizeBuffers=0002ABC0
+IDXGISwapChain::Release=0004F5C0
+IDXGISwapChain1::Present1=0004AA10
+IDXGIFactory::CreateSwapChain=000A8F40
+IDXGIFactory2::CreateSwapChainForHwnd=000A9610
+IDXGIFactory2::CreateSwapChainForCoreWindow=000A9490
+kernel32.dll=000A6D48 A5BAA890 01
+LoadLibraryA=00031C20
 LoadLibraryW=0001D820
 Version=0000000A
 D3D12.DLL=000144C0 DFA0F1A2
-ID3D12CommandQueue::ExecuteCommandLists=00064450
-IDXGISwapChain3::ResizeBuffers1=000A5E50
-IDXGISwapChain::SetFullscreenState=00026130
-D3D12Core.DLL=0020BD78 9350F703
+ID3D12CommandQueue::ExecuteCommandLists=00084FA0
+IDXGISwapChain3::ResizeBuffers1=000B36B0
+IDXGISwapChain::SetFullscreenState=0002C6B0
+D3D12Core.DLL=002C8E00 D373841C 01
 IDXGISwapChain1::m_pCommandQueue=000000B8
 [Settings]
 LastUpdateCheck=666E98C1h
 Skin=default.usf
-WindowX=2028
-WindowY=671
+WindowX=1918
+WindowY=653
 FirstRun=0
 StartMinimized=1
 StartWithWindows=0
@@ -745,7 +793,7 @@ Enable64Bit=1
 Use64BitEncoderServer=1
 HidePreCreatedProfiles=1
 UpdateCheckingPeriod=0
-Language=
+Language=RUS
 LayeredWindowMode=0
 LayeredWindowAlpha=255
 ScaleFactor=100
@@ -754,23 +802,24 @@ Flags=00000004
 [Plugins]
 OverlayEditor.dll=0
 HotkeyHandler.dll=1
-
 "@
-Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\Profiles\Config" -Value $MultilineComment -Force
-# edit config for rivatuner statistics server
-$MultilineComment = @"
+Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\Profiles\Config" -Value $Config -Force
+
+# 3.2. Файл Global (главные настройки OSD) – исправленный под картинку
+$Global = @"
 [OSD]
-EnableOSD=1
+EnableOSD=0
 EnableBgnd=1
 EnableFill=0
 EnableStat=0
-BaseColor=FFFFFFFF
+BaseColor=00FF8000
 BgndColor=00000000
 FillColor=80000000
 PositionX=1
-PositionY=450
+PositionY=550
 ZoomRatio=2
 CoordinateSpace=0
+Shadow=1
 EnableFrameColorBar=0
 FrameColorBarMode=0
 RefreshPeriod=500
@@ -799,7 +848,7 @@ SyncPeriods=0
 SyncLimiter=0
 PassiveWait=1
 ReflexSleep=0
-ReflexSetLatencyMarker=0
+ReflexSetLatencyMarker=1
 [Hooking]
 EnableHooking=1
 EnableFloatingInjectionAddress=0
@@ -814,7 +863,7 @@ HookDirect3D12=1
 HookOpenGL=1
 HookVulkan=1
 InjectionDelay=15000
-UseDetours=1
+UseDetours=0
 [Font]
 Height=-9
 Weight=400
@@ -835,23 +884,41 @@ Implementation=2
 [RendererVulkan]
 Implementation=2
 [Info]
-
-Timestamp=09-01-2026, 16:01:29
-
+Timestamp=04-06-2026, 17:56:18
 "@
-Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\Profiles\Global" -Value $MultilineComment -Force
-# edit config for rivatuner statistics server
-$MultilineComment = @"
+Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\Profiles\Global" -Value $Global -Force
+
+# Исключения RTSS (MTA/GTA SA, CS2 — отключение хука)
+$RtssNoHook = @"
+[Hooking]
+EnableHooking=0
+"@
+foreach ($Excl in @("gta_sa.exe.cfg", "proxy_sa.exe.cfg", "Multi Theft Auto.exe.cfg", "CS2.exe.cfg", "Yurigram.exe.cfg", "Telegram.exe.cfg", "destiny2.exe.cfg", "VALORANT-Win64-Shipping.exe.cfg", "League of Legends.exe.cfg", "bf6.exe.cfg", "BF2042.exe.cfg", "FC25.exe.cfg", "FC26.exe.cfg", "r5apex.exe.cfg", "FortniteClient-Win64-Shipping.exe.cfg", "RustClient.exe.cfg", "EscapeFromTarkov.exe.cfg", "RainbowSix.exe.cfg", "RainbowSix_BE.exe.cfg", "start_protected_game.exe.cfg")) {
+    Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\Profiles\$Excl" -Value $RtssNoHook -Encoding Ascii -Force
+}
+
+# папки клиентских плагинов RTSS: новые версии - Plugins64\Client, старые - Plugins\Client.
+# без этого блока файлы ниже НЕ ЗАПИСЫВАЛИСЬ (Set-Content не создаёт папки) - оверлей ломался
+$RtssRoot = "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server"
+$RtssClient = "$RtssRoot\Plugins64\Client"
+if (!(Test-Path $RtssClient)) { $RtssClient = "$RtssRoot\Plugins\Client" }
+New-Item -Path $RtssClient -ItemType Directory -Force | Out-Null
+New-Item -Path "$RtssClient\Overlays" -ItemType Directory -Force | Out-Null
+New-Item -Path "$RtssRoot\ProfileTemplates" -ItemType Directory -Force | Out-Null
+
+# 3.3. Файл OverlayEditor.cfg (используем fr33thy.ovl)
+$OverlayEditorCfg = @"
 [Settings]
 Layout=fr33thy.ovl
 "@
-Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\Plugins\Client\OverlayEditor.cfg" -Value $MultilineComment -Force
-# edit config for rivatuner statistics server
-$MultilineComment = @"
+Set-Content -Path "$RtssClient\OverlayEditor.cfg" -Value $OverlayEditorCfg -Force
+
+# 3.4. Файл HotkeyHandler.cfg (горячие клавиши)
+$HotkeyHandlerCfg = @"
 [Settings]
 OSDOnHotkey=00000000
 OSDOffHotkey=00000000
-OSDToggleHotkey=00000000
+OSDToggleHotkey=00040031
 LimiterOnHotkey=00000000
 LimiterOffHotkey=00000000
 LimiterToggleHotkey=00000000
@@ -924,27 +991,29 @@ OVM4Desc=
 OVM4Message=
 OVM4Layer=
 OVM4Params=
-
 "@
-Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\Plugins\Client\HotkeyHandler.cfg" -Value $MultilineComment -Force
-# create overlay for rivatuner statistics server
-$MultilineComment = @"
+Set-Content -Path "$RtssClient\HotkeyHandler.cfg" -Value $HotkeyHandlerCfg -Force
+
+
+# 3.5. Оверлей fr33thy.ovl для RivaTuner Statistics Server (актуальный макет)
+$fr33thyovl = @"
 [Master]
 Implementation=2
 FontFace=Unispace
 FontHeight=-9
 FontWeight=400
-ZoomRatio=2
+ZoomRatio=4
 [Settings]
 Name=
 EnvVars=
 RefreshPeriod=1000
+LockUserSettings=0
 EmbeddedImage=
 PingAddr=
 [General]
 Sources=66
 Tables=0
-Layers=73
+Layers=69
 [Source0]
 Name=RAM usage
 Units=MB
@@ -1528,227 +1597,227 @@ Formula=(msGpuActive / msBetweenPresents) >= 0.75
 Provider=HAL
 ID=Stub
 [Layer0]
-Name=Box Game
-Text=
-PositionX=48
-PositionY=49
-ExtentX=161
-ExtentY=8
-ExtentOrigin=0
-Size=70
-TextColor=FFFFFF
-BgndColor=822B2B2B
-[Layer1]
 Name=Box Header Game
 Text=
-PositionX=48
-PositionY=49
-ExtentX=161
+PositionX=0
+PositionY=0
+ExtentX=207
 ExtentY=8
 ExtentOrigin=0
 Size=70
 TextColor=FFFFFF
 BgndColor=DB2B2B2B
-[Layer2]
+[Layer1]
 Name=Game Text
 Text=GAME
-PositionX=49
-PositionY=50
+PositionX=1
+PositionY=1
 ExtentX=-1
 ExtentY=-1
 ExtentOrigin=0
 Size=70
 TextColor=FFFFFF
-[Layer3]
+[Layer2]
 Name=Game Title
 Text=<EXE>
-PositionX=69
-PositionY=50
-ExtentX=140
+PositionX=18
+PositionY=1
+ExtentX=188
 ExtentY=9
 ExtentOrigin=0
 Size=70
 TextColor=11C511
-[Layer4]
+[Layer3]
 Name=Box Info
 Text=
-PositionX=106
-PositionY=58
+PositionX=104
+PositionY=9
 ExtentX=103
-ExtentY=147
+ExtentY=127
 ExtentOrigin=0
 Size=70
 TextColor=FFFFFF
 BgndColor=822B2B2B
-[Layer5]
+[Layer4]
 Name=Box Header Info Config
 Text=
-PositionX=106
-PositionY=58
+PositionX=104
+PositionY=9
 ExtentX=103
 ExtentY=10
 ExtentOrigin=0
 Size=70
 TextColor=FFFFFF
 BgndColor=DB2B2B2B
-[Layer6]
+[Layer5]
 Name=Config Text
 Text=CONFIG
-PositionX=107
-PositionY=60
+PositionX=105
+PositionY=11
 ExtentX=24
 ExtentY=1
 ExtentOrigin=0
 Size=70
 TextColor=FFFFFF
-[Layer7]
+[Layer6]
 Name=Config
 Text=<RES>\n%Display1 refresh rate%hz\n<APP>\n<SWITCH PresentMode><CASE 1>HW:Legacy Flip<CASE 2>HW:Legacy Copy<CASE 3>HW:Independent Flip<CASE 4>COMP:Flip<CASE 5>COMP:CPU Copy<CASE 6>COMP:GPU Copy<CASE 8>HW COMP:Independent Flip
-PositionX=107
-PositionY=70
+PositionX=105
+PositionY=21
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
 FixedAlignment=1
 Size=70
 TextColor=11C511
-[Layer8]
+[Layer7]
 Name=Box Header Info Driver
 Text=
-PositionX=106
-PositionY=100
+PositionX=104
+PositionY=51
 ExtentX=103
 ExtentY=10
 ExtentOrigin=0
 Size=70
 TextColor=FFFFFF
 BgndColor=DB2B2B2B
-[Layer9]
+[Layer8]
 Name=Driver Text
 Text=DRIVER
-PositionX=107
-PositionY=101
+PositionX=105
+PositionY=52
 ExtentX=12
 ExtentY=7
 ExtentOrigin=0
 FixedAlignment=1
 Size=70
 TextColor=FFFFFF
-[Layer10]
+[Layer9]
 Name=Driver
 Text=%Driver%
-PositionX=107
-PositionY=112
+PositionX=105
+PositionY=63
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
 FixedAlignment=1
 Size=70
 TextColor=11C511
-[Layer11]
-Name=Box Header Info Windows
-Text=
-PositionX=106
-PositionY=120
-ExtentX=103
-ExtentY=10
-ExtentOrigin=0
-Size=70
-TextColor=FFFFFF
-BgndColor=DB2B2B2B
-[Layer12]
-Name=Windows Text
-Text=WINDOWS
-PositionX=107
-PositionY=121
-ExtentX=12
-ExtentY=6
-ExtentOrigin=0
-FixedAlignment=1
-Size=70
-TextColor=FFFFFF
-[Layer13]
-Name=Windows
-Text=W11 24H2
-PositionX=107
-PositionY=131
-ExtentX=0
-ExtentY=0
-ExtentOrigin=0
-FixedAlignment=1
-Size=70
-TextColor=11C511
-[Layer14]
+[Layer10]
 Name=Box Header Info Time
 Text=
-PositionX=106
-PositionY=140
+PositionX=104
+PositionY=71
 ExtentX=103
-ExtentY=10
+ExtentY=8
 ExtentOrigin=0
 Size=70
 TextColor=FFFFFF
 BgndColor=DB2B2B2B
-[Layer15]
+[Layer11]
 Name=Time Text
 Text=TIME
-PositionX=107
-PositionY=141
+PositionX=105
+PositionY=72
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
 FixedAlignment=1
 Size=70
 TextColor=FFFFFF
-[Layer16]
+[Layer12]
 Name=Time
 Text=%Time12%\n%Date%
-PositionX=107
-PositionY=151
+PositionX=105
+PositionY=82
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
 FixedAlignment=1
 Size=70
 TextColor=11C511
-[Layer17]
+[Layer13]
 Name=Box Header Info Limit
 Text=
-PositionX=106
-PositionY=166
+PositionX=104
+PositionY=97
 ExtentX=103
 ExtentY=10
 ExtentOrigin=0
 Size=70
 TextColor=FFFFFF
 BgndColor=DB2B2B2B
-[Layer18]
+[Layer14]
 Name=Limit Text
 Text=LIMIT
-PositionX=107
-PositionY=167
+PositionX=105
+PositionY=98
 ExtentX=20
 ExtentY=6
 ExtentOrigin=0
 FixedAlignment=1
 Size=70
 TextColor=FFFFFF
-[Layer19]
+[Layer15]
 Name=Limit
 Text=<IF IsGpuLimited>GPU<ELSE>CPU
-PositionX=107
-PositionY=178
+PositionX=105
+PositionY=109
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
 FixedAlignment=1
 Size=70
 TextColor=11C511
-[Layer20]
+[Layer16]
 Name=Box Header Info FPS
 Text=
-PositionX=106
-PositionY=186
+PositionX=104
+PositionY=117
+ExtentX=103
+ExtentY=10
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+BgndColor=DB2B2B2B
+[Layer17]
+Name=FPS Text
+Text=FPS
+PositionX=105
+PositionY=118
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer18]
+Name=FPS
+Text=<FR> fps
+PositionX=105
+PositionY=128
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer19]
+Name=Box CPU
+Text=
+PositionX=0
+PositionY=9
+ExtentX=103
+ExtentY=147
+ExtentOrigin=0
+Size=70
+TextColor=FFFFFF
+BgndColor=822B2B2B
+[Layer20]
+Name=Box Header CPU
+Text=
+PositionX=0
+PositionY=9
 ExtentX=103
 ExtentY=10
 ExtentOrigin=0
@@ -1756,95 +1825,95 @@ Size=70
 TextColor=FFFFFF
 BgndColor=DB2B2B2B
 [Layer21]
-Name=FPS Text
-Text=FPS
-PositionX=107
-PositionY=187
-ExtentX=0
-ExtentY=0
-ExtentOrigin=0
-FixedAlignment=1
-Size=70
-TextColor=FFFFFF
-[Layer22]
-Name=FPS
-Text=<FR> fps
-PositionX=107
-PositionY=197
-ExtentX=0
-ExtentY=0
-ExtentOrigin=0
-FixedAlignment=1
-Size=70
-TextColor=11C511
-[Layer23]
-Name=Box CPU
-Text=
-PositionX=2
-PositionY=58
-ExtentX=103
-ExtentY=147
-ExtentOrigin=0
-Size=70
-TextColor=FFFFFF
-BgndColor=822B2B2B
-[Layer24]
-Name=Box Header CPU
-Text=
-PositionX=2
-PositionY=58
-ExtentX=103
-ExtentY=10
-ExtentOrigin=0
-Size=70
-TextColor=FFFFFF
-BgndColor=DB2B2B2B
-[Layer25]
 Name=CPU Text
 Text=%CPUShort% %RAM%
-PositionX=3
-PositionY=59
+PositionX=1
+PositionY=10
 ExtentX=60
 ExtentY=6
 ExtentOrigin=0
 FixedAlignment=1
 Size=70
 TextColor=FFFFFF
-[Layer26]
+[Layer22]
 Name=CPU
 Text=%RAM usage%mb
-PositionX=36
-PositionY=69
+PositionX=34
+PositionY=20
 ExtentX=60
 ExtentY=7
 ExtentOrigin=0
 Size=70
 TextColor=11C511
-[Layer27]
+[Layer23]
 Name=CPU Power
 Text=%CPU power%w
-PositionX=68
-PositionY=69
+PositionX=66
+PositionY=20
 ExtentX=5
 ExtentY=7
 ExtentOrigin=0
 Size=70
 TextColor=11C511
-[Layer28]
+[Layer24]
 Name=CPU Usage
 Text=%CPU usage%%
-PositionX=88
-PositionY=69
+PositionX=86
+PositionY=20
 ExtentX=1
 ExtentY=7
 ExtentOrigin=0
 Size=70
 TextColor=11C511
-[Layer29]
+[Layer25]
 Name=CPU 1 Text
 Text=CPU 1
-PositionX=3
-PositionY=77
+PositionX=1
+PositionY=28
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer26]
+Name=CPU 1
+Text=%CPU1 clock%mhz %CPU1 temperature%°C %CPU1 usage%%
+PositionX=34
+PositionY=28
+ExtentX=60
+ExtentY=8
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer27]
+Name=CPU 2 Text
+Text=CPU 2
+PositionX=1
+PositionY=36
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=FFFFFF
+[Layer28]
+Name=CPU 2
+Text=%CPU2 clock%mhz %CPU2 temperature%°C %CPU2 usage%%
+PositionX=34
+PositionY=36
+ExtentX=0
+ExtentY=0
+ExtentOrigin=0
+FixedAlignment=1
+Size=70
+TextColor=11C511
+[Layer29]
+Name=CPU 3 Text
+Text=CPU 3
+PositionX=1
+PositionY=44
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -1852,21 +1921,21 @@ FixedAlignment=1
 Size=70
 TextColor=FFFFFF
 [Layer30]
-Name=CPU 1
-Text=%CPU1 clock%mhz %CPU1 temperature%°C %CPU1 usage%%
-PositionX=36
-PositionY=77
-ExtentX=60
-ExtentY=8
+Name=CPU 3
+Text=%CPU3 clock%mhz %CPU3 temperature%°C %CPU3 usage%%
+PositionX=34
+PositionY=44
+ExtentX=0
+ExtentY=0
 ExtentOrigin=0
 FixedAlignment=1
 Size=70
 TextColor=11C511
 [Layer31]
-Name=CPU 2 Text
-Text=CPU 2
-PositionX=3
-PositionY=85
+Name=CPU 4 Text
+Text=CPU 4
+PositionX=1
+PositionY=52
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -1874,10 +1943,10 @@ FixedAlignment=1
 Size=70
 TextColor=FFFFFF
 [Layer32]
-Name=CPU 2
-Text=%CPU2 clock%mhz %CPU2 temperature%°C %CPU2 usage%%
-PositionX=36
-PositionY=85
+Name=CPU 4
+Text=%CPU4 clock%mhz %CPU4 temperature%°C %CPU4 usage%%
+PositionX=34
+PositionY=52
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -1885,10 +1954,10 @@ FixedAlignment=1
 Size=70
 TextColor=11C511
 [Layer33]
-Name=CPU 3 Text
-Text=CPU 3
-PositionX=3
-PositionY=93
+Name=CPU 5 Text
+Text=CPU 5
+PositionX=1
+PositionY=60
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -1896,10 +1965,10 @@ FixedAlignment=1
 Size=70
 TextColor=FFFFFF
 [Layer34]
-Name=CPU 3
-Text=%CPU3 clock%mhz %CPU3 temperature%°C %CPU3 usage%%
-PositionX=36
-PositionY=93
+Name=CPU 5
+Text=%CPU5 clock%mhz %CPU5 temperature%°C %CPU5 usage%%
+PositionX=34
+PositionY=60
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -1907,10 +1976,10 @@ FixedAlignment=1
 Size=70
 TextColor=11C511
 [Layer35]
-Name=CPU 4 Text
-Text=CPU 4
-PositionX=3
-PositionY=101
+Name=CPU 6 Text
+Text=CPU 6
+PositionX=1
+PositionY=68
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -1918,10 +1987,10 @@ FixedAlignment=1
 Size=70
 TextColor=FFFFFF
 [Layer36]
-Name=CPU 4
-Text=%CPU4 clock%mhz %CPU4 temperature%°C %CPU4 usage%%
-PositionX=36
-PositionY=101
+Name=CPU 6
+Text=%CPU6 clock%mhz %CPU6 temperature%°C %CPU6 usage%%
+PositionX=34
+PositionY=68
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -1929,10 +1998,10 @@ FixedAlignment=1
 Size=70
 TextColor=11C511
 [Layer37]
-Name=CPU 5 Text
-Text=CPU 5
-PositionX=3
-PositionY=109
+Name=CPU 7 Text
+Text=CPU 7
+PositionX=1
+PositionY=76
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -1940,10 +2009,10 @@ FixedAlignment=1
 Size=70
 TextColor=FFFFFF
 [Layer38]
-Name=CPU 5
-Text=%CPU5 clock%mhz %CPU5 temperature%°C %CPU5 usage%%
-PositionX=36
-PositionY=109
+Name=CPU 7
+Text=%CPU7 clock%mhz %CPU7 temperature%°C %CPU7 usage%%
+PositionX=34
+PositionY=76
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -1951,10 +2020,10 @@ FixedAlignment=1
 Size=70
 TextColor=11C511
 [Layer39]
-Name=CPU 6 Text
-Text=CPU 6
-PositionX=3
-PositionY=117
+Name=CPU 8 Text
+Text=CPU 8
+PositionX=1
+PositionY=84
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -1962,10 +2031,10 @@ FixedAlignment=1
 Size=70
 TextColor=FFFFFF
 [Layer40]
-Name=CPU 6
-Text=%CPU6 clock%mhz %CPU6 temperature%°C %CPU6 usage%%
-PositionX=36
-PositionY=117
+Name=CPU 8
+Text=%CPU8 clock%mhz %CPU8 temperature%°C %CPU8 usage%%
+PositionX=34
+PositionY=84
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -1973,10 +2042,10 @@ FixedAlignment=1
 Size=70
 TextColor=11C511
 [Layer41]
-Name=CPU 7 Text
-Text=CPU 7
-PositionX=3
-PositionY=125
+Name=CPU 9 Text
+Text=CPU 9
+PositionX=1
+PositionY=92
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -1984,10 +2053,10 @@ FixedAlignment=1
 Size=70
 TextColor=FFFFFF
 [Layer42]
-Name=CPU 7
-Text=%CPU7 clock%mhz %CPU7 temperature%°C %CPU7 usage%%
-PositionX=36
-PositionY=125
+Name=CPU 9
+Text=%CPU9 clock%mhz %CPU9 temperature%°C %CPU9 usage%%
+PositionX=34
+PositionY=92
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -1995,10 +2064,10 @@ FixedAlignment=1
 Size=70
 TextColor=11C511
 [Layer43]
-Name=CPU 8 Text
-Text=CPU 8
-PositionX=3
-PositionY=133
+Name=CPU 10 Text
+Text=CPU 10
+PositionX=1
+PositionY=100
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2006,10 +2075,10 @@ FixedAlignment=1
 Size=70
 TextColor=FFFFFF
 [Layer44]
-Name=CPU 8
-Text=%CPU8 clock%mhz %CPU8 temperature%°C %CPU8 usage%%
-PositionX=36
-PositionY=133
+Name=CPU 10
+Text=%CPU10 clock%mhz %CPU10 temperature%°C %CPU10 usage%%
+PositionX=34
+PositionY=100
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2017,10 +2086,10 @@ FixedAlignment=1
 Size=70
 TextColor=11C511
 [Layer45]
-Name=CPU 9 Text
-Text=CPU 9
-PositionX=3
-PositionY=141
+Name=CPU 11 Text
+Text=CPU 11
+PositionX=1
+PositionY=108
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2028,10 +2097,10 @@ FixedAlignment=1
 Size=70
 TextColor=FFFFFF
 [Layer46]
-Name=CPU 9
-Text=%CPU9 clock%mhz %CPU9 temperature%°C %CPU9 usage%%
-PositionX=36
-PositionY=141
+Name=CPU 11
+Text=%CPU11 clock%mhz %CPU11 temperature%°C %CPU11 usage%%
+PositionX=34
+PositionY=108
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2039,10 +2108,10 @@ FixedAlignment=1
 Size=70
 TextColor=11C511
 [Layer47]
-Name=CPU 10 Text
-Text=CPU 10
-PositionX=3
-PositionY=149
+Name=CPU 12 Text
+Text=CPU 12
+PositionX=1
+PositionY=116
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2050,10 +2119,10 @@ FixedAlignment=1
 Size=70
 TextColor=FFFFFF
 [Layer48]
-Name=CPU 10
-Text=%CPU10 clock%mhz %CPU10 temperature%°C %CPU10 usage%%
-PositionX=36
-PositionY=149
+Name=CPU 12
+Text=%CPU12 clock%mhz %CPU12 temperature%°C %CPU12 usage%%
+PositionX=34
+PositionY=116
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2061,10 +2130,10 @@ FixedAlignment=1
 Size=70
 TextColor=11C511
 [Layer49]
-Name=CPU 11 Text
-Text=CPU 11
-PositionX=3
-PositionY=157
+Name=CPU 13 Text
+Text=CPU 13
+PositionX=1
+PositionY=124
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2072,10 +2141,10 @@ FixedAlignment=1
 Size=70
 TextColor=FFFFFF
 [Layer50]
-Name=CPU 11
-Text=%CPU11 clock%mhz %CPU11 temperature%°C %CPU11 usage%%
-PositionX=36
-PositionY=157
+Name=CPU 13
+Text=%CPU13 clock%mhz %CPU13 temperature%°C %CPU13 usage%%
+PositionX=34
+PositionY=124
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2083,10 +2152,10 @@ FixedAlignment=1
 Size=70
 TextColor=11C511
 [Layer51]
-Name=CPU 12 Text
-Text=CPU 12
-PositionX=3
-PositionY=165
+Name=CPU 14 Text
+Text=CPU 14
+PositionX=1
+PositionY=132
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2094,10 +2163,10 @@ FixedAlignment=1
 Size=70
 TextColor=FFFFFF
 [Layer52]
-Name=CPU 12
-Text=%CPU12 clock%mhz %CPU12 temperature%°C %CPU12 usage%%
-PositionX=36
-PositionY=165
+Name=CPU 14
+Text=%CPU14 clock%mhz %CPU14 temperature%°C %CPU14 usage%%
+PositionX=34
+PositionY=132
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2105,10 +2174,10 @@ FixedAlignment=1
 Size=70
 TextColor=11C511
 [Layer53]
-Name=CPU 13 Text
-Text=CPU 13
-PositionX=3
-PositionY=173
+Name=CPU 15 Text
+Text=CPU 15
+PositionX=1
+PositionY=140
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2116,10 +2185,10 @@ FixedAlignment=1
 Size=70
 TextColor=FFFFFF
 [Layer54]
-Name=CPU 13
-Text=%CPU13 clock%mhz %CPU13 temperature%°C %CPU13 usage%%
-PositionX=36
-PositionY=173
+Name=CPU 15
+Text=%CPU15 clock%mhz %CPU15 temperature%°C %CPU15 usage%%
+PositionX=34
+PositionY=140
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2127,10 +2196,10 @@ FixedAlignment=1
 Size=70
 TextColor=11C511
 [Layer55]
-Name=CPU 14 Text
-Text=CPU 14
-PositionX=3
-PositionY=181
+Name=CPU 16 Text
+Text=CPU 16
+PositionX=1
+PositionY=148
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2138,10 +2207,10 @@ FixedAlignment=1
 Size=70
 TextColor=FFFFFF
 [Layer56]
-Name=CPU 14
-Text=%CPU14 clock%mhz %CPU14 temperature%°C %CPU14 usage%%
-PositionX=36
-PositionY=181
+Name=CPU 16
+Text=%CPU16 clock%mhz %CPU16 temperature%°C %CPU16 usage%%
+PositionX=34
+PositionY=148
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2149,32 +2218,32 @@ FixedAlignment=1
 Size=70
 TextColor=11C511
 [Layer57]
-Name=CPU 15 Text
-Text=CPU 15
-PositionX=3
-PositionY=189
-ExtentX=0
-ExtentY=0
+Name=Box GPU
+Text=
+PositionX=0
+PositionY=157
+ExtentX=103
+ExtentY=38
 ExtentOrigin=0
-FixedAlignment=1
 Size=70
 TextColor=FFFFFF
+BgndColor=822B2B2B
 [Layer58]
-Name=CPU 15
-Text=%CPU15 clock%mhz %CPU15 temperature%°C %CPU15 usage%%
-PositionX=36
-PositionY=189
-ExtentX=0
-ExtentY=0
+Name=Box Header GPU
+Text=
+PositionX=0
+PositionY=157
+ExtentX=103
+ExtentY=10
 ExtentOrigin=0
-FixedAlignment=1
 Size=70
-TextColor=11C511
+TextColor=FFFFFF
+BgndColor=DB2B2B2B
 [Layer59]
-Name=CPU 16 Text
-Text=CPU 16
-PositionX=3
-PositionY=197
+Name=GPU Text
+Text=%GPU% %VRAM%
+PositionX=1
+PositionY=158
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2182,145 +2251,101 @@ FixedAlignment=1
 Size=70
 TextColor=FFFFFF
 [Layer60]
-Name=CPU 16
-Text=%CPU16 clock%mhz %CPU16 temperature%°C %CPU16 usage%%
-PositionX=36
-PositionY=197
-ExtentX=0
-ExtentY=0
-ExtentOrigin=0
-FixedAlignment=1
-Size=70
-TextColor=11C511
-[Layer61]
-Name=Box GPU
-Text=
-PositionX=2
-PositionY=206
-ExtentX=103
-ExtentY=38
-ExtentOrigin=0
-Size=70
-TextColor=FFFFFF
-BgndColor=822B2B2B
-[Layer62]
-Name=Box Header GPU
-Text=
-PositionX=2
-PositionY=206
-ExtentX=103
-ExtentY=10
-ExtentOrigin=0
-Size=70
-TextColor=FFFFFF
-BgndColor=DB2B2B2B
-[Layer63]
-Name=GPU Text
-Text=%GPU% %VRAM%
-PositionX=3
-PositionY=207
-ExtentX=0
-ExtentY=0
-ExtentOrigin=0
-FixedAlignment=1
-Size=70
-TextColor=FFFFFF
-[Layer64]
 Name=GPU Text
 Text=GPU
-PositionX=3
-PositionY=227
+PositionX=1
+PositionY=178
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
 FixedAlignment=1
 Size=70
 TextColor=FFFFFF
-[Layer65]
+[Layer61]
 Name=GPU
 Text=%Memory usage%mb
-PositionX=36
-PositionY=219
+PositionX=34
+PositionY=170
 ExtentX=48
 ExtentY=7
 ExtentOrigin=0
 Size=70
 TextColor=11C511
-[Layer66]
+[Layer62]
 Name=GPU Usage
 Text=%GPU usage%%
-PositionX=68
-PositionY=219
+PositionX=66
+PositionY=170
 ExtentX=2
 ExtentY=7
 ExtentOrigin=0
 Size=70
 TextColor=11C511
-[Layer67]
+[Layer63]
 Name=GPU Clocks
 Text=%Core clock%mhz %GPU temperature%°C\n%Memory clock%mhz
-PositionX=36
-PositionY=227
+PositionX=34
+PositionY=178
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
 FixedAlignment=1
 Size=70
 TextColor=11C511
-[Layer68]
+[Layer64]
 Name=Box Benchmark
 VisibilitySource=IsBenchmarkActive
 Text=
-PositionX=106
-PositionY=206
+PositionX=104
+PositionY=137
 ExtentX=67
 ExtentY=64
 ExtentOrigin=0
 Size=70
 TextColor=FFFFFF
 BgndColor=822B2B2B
-[Layer69]
+[Layer65]
 Name=Box Header Benchmark
 VisibilitySource=IsBenchmarkActive
 Text=
-PositionX=106
-PositionY=206
+PositionX=104
+PositionY=137
 ExtentX=67
 ExtentY=17
 ExtentOrigin=0
 Size=70
 TextColor=FFFFFF
 BgndColor=DB2B2B2B
-[Layer70]
+[Layer66]
 Name=Benchmark Time Text
 VisibilitySource=IsBenchmarkActive
 Text="   Benchmark\n    <BTIME>"
-PositionX=109
-PositionY=208
+PositionX=107
+PositionY=139
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
 FixedAlignment=1
 Size=70
 TextColor=FFFFFF
-[Layer71]
+[Layer67]
 Name=Benchmark Text
 VisibilitySource=IsBenchmarkActive
 Text=FPS\nAVG\nMAX\nMIN\n1%\n0.1%
-PositionX=107
-PositionY=225
+PositionX=105
+PositionY=156
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
 FixedAlignment=1
 Size=70
 TextColor=FFFFFF
-[Layer72]
+[Layer68]
 Name=Benchmark
 VisibilitySource=IsBenchmarkActive
 Text=<FR> fps\n<FRAVG> fps\n<FRMAX> fps\n<FRMIN> fps\n<FR10L>  %\n<FR01L>  %
-PositionX=140
-PositionY=225
+PositionX=138
+PositionY=156
 ExtentX=0
 ExtentY=0
 ExtentOrigin=0
@@ -2329,9 +2354,10 @@ Size=70
 TextColor=11C511
 
 "@
-Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\Plugins\Client\Overlays\fr33thy.ovl" -Value $MultilineComment -Force
-# edit config for rivatuner statistics server
-$MultilineComment = @"
+Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\Plugins\Client\Overlays\fr33thy.ovl" -Value $fr33thyovl -Force
+
+# Создание desktopoverlayhost.cfg для RivaTuner
+$DesktopOverlayHostCfg = @"
 [Settings]
 WindowX=0
 WindowY=0
@@ -2348,5 +2374,153 @@ SuspendInIdle=0
 ScaleToFit=0
 Maximized=1
 
+
 "@
-Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\DesktopOverlayHost.cfg" -Value $MultilineComment -Force
+Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\DesktopOverlayHost.cfg" -Value $DesktopOverlayHostCfg -Force
+
+# Очистка и настройка ярлыков в меню Пуск
+Move-Item -Path "$env:AppData\Microsoft\Windows\Start Menu\Programs\MSI Afterburner\MSI Afterburner.lnk" -Destination "$env:ProgramData\Microsoft\Windows\Start Menu\Programs" -Force -ErrorAction SilentlyContinue | Out-Null
+Remove-Item "$env:AppData\Microsoft\Windows\Start Menu\Programs\MSI Afterburner" -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
+Remove-Item "$env:AppData\Microsoft\Windows\Start Menu\Programs\RivaTuner Statistics Server" -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
+
+# Применение киберспортивного профиля NVIDIA (RTX 5080 + 9800X3D)
+Write-Host "Применение киберспортивного профиля драйвера NVIDIA..." -ForegroundColor Yellow
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
+$npiDir = "$env:TEMP\npi"
+$npiExe = if (Test-Path "$scriptDir\nvidiaProfileInspector.exe") { "$scriptDir\nvidiaProfileInspector.exe" } else { "$npiDir\nvidiaProfileInspector.exe" }
+$localNip = if (Test-Path "$scriptDir\NV-Esports-Ultimate.nip") { "$scriptDir\NV-Esports-Ultimate.nip" } else { "$npiDir\NV-Esports-Ultimate.nip" }
+try {
+    if (-not (Test-Path $npiExe)) {
+        New-Item -Path $npiDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+        $npiZip = "$env:TEMP\nvidiaProfileInspector.zip"
+        Invoke-WebRequest -Uri "https://github.com/Orbmu2k/nvidiaProfileInspector/releases/download/2.4.0.4/nvidiaProfileInspector.zip" -OutFile $npiZip -UseBasicParsing -TimeoutSec 10
+        Expand-Archive -Path $npiZip -DestinationPath $npiDir -Force
+        Remove-Item $npiZip -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $npiExe) {
+        if (-not (Test-Path $localNip)) {
+            $nipXml = @"
+<?xml version="1.0" encoding="utf-16"?>
+<ArrayOfProfile>
+  <Profile>
+    <ProfileName>Base Profile</ProfileName>
+    <Executeables />
+    <Settings>
+      <ProfileSetting><SettingNameInfo>Shader Cache</SettingNameInfo><SettingID>1675263</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Shader disk cache maximum size</SettingNameInfo><SettingID>11306135</SettingID><SettingValue>4294967295</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Power management mode</SettingNameInfo><SettingID>274197361</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Maximum pre-rendered frames</SettingNameInfo><SettingID>8102046</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Maximum frames allowed</SettingNameInfo><SettingID>546199011</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Preferred refresh rate</SettingNameInfo><SettingID>6600001</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Triple buffering</SettingNameInfo><SettingID>553505273</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Threaded optimization</SettingNameInfo><SettingID>549528094</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Texture filtering - Quality</SettingNameInfo><SettingID>13510289</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Texture filtering - Anisotropic sample optimization</SettingNameInfo><SettingID>15151633</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Texture filtering - Anisotropic filter optimization</SettingNameInfo><SettingID>8703344</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Texture filtering - Negative LOD bias</SettingNameInfo><SettingID>1686376</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Texture filtering - Trilinear optimization</SettingNameInfo><SettingID>3066610</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Anisotropic filtering mode</SettingNameInfo><SettingID>282245910</SettingID><SettingValue>2</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Anisotropic filtering setting</SettingNameInfo><SettingID>270426537</SettingID><SettingValue>16</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Vertical Sync</SettingNameInfo><SettingID>11041231</SettingID><SettingValue>138504007</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Vertical Sync Tear Control</SettingNameInfo><SettingID>5912412</SettingID><SettingValue>2525368439</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>G-SYNC</SettingNameInfo><SettingID>279476652</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>G-SYNC</SettingNameInfo><SettingID>279476687</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Enable G-SYNC globally</SettingNameInfo><SettingID>294973784</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Toggle the VRR global feature</SettingNameInfo><SettingID>278196567</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>VRR requested state</SettingNameInfo><SettingID>278196727</SettingID><SettingValue>1</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Display the VRR Indicator</SettingNameInfo><SettingID>268604728</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Enable Ansel</SettingNameInfo><SettingID>276158834</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Enable overlay</SettingNameInfo><SettingID>543959236</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Display the PhysX indicator</SettingNameInfo><SettingID>278196591</SettingID><SettingValue>877871204</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Enable FXAA Indicator</SettingNameInfo><SettingID>275315612</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>SILK Smoothness</SettingNameInfo><SettingID>9990737</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Flag to control smooth AFR behavior</SettingNameInfo><SettingID>270198627</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Idle Application Max FPS Limit</SettingNameInfo><SettingID>277041174</SettingID><SettingValue>30</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Idle Application Threshold Time out in seconds</SettingNameInfo><SettingID>277041175</SettingID><SettingValue>501</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>FRL Low Latency</SettingNameInfo><SettingID>277041152</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Frame Rate Limiter</SettingNameInfo><SettingID>277041154</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>Background Application Max Frame Rate</SettingNameInfo><SettingID>277041157</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+      <ProfileSetting><SettingNameInfo>NVIDIA Predefined Sharpen Usage</SettingNameInfo><SettingID>5867849</SettingID><SettingValue>0</SettingValue><ValueType>Dword</ValueType></ProfileSetting>
+    </Settings>
+  </Profile>
+</ArrayOfProfile>
+"@
+            $localNip = "$npiDir\NV-Esports-Ultimate.nip"
+            Set-Content -Path $localNip -Value $nipXml -Encoding Unicode -Force
+        }
+        Start-Process -FilePath $npiExe -ArgumentList @("`"$localNip`"", "-silent") -Wait -WindowStyle Hidden
+        Write-Host "      Профиль NVIDIA успешно применен (шейдерный кэш Unlimited, P-State 1, 16x AF, Threaded On)." -ForegroundColor Green
+    }
+} catch {
+    Write-Host "      Предупреждение: не удалось применить профиль NVIDIA: $($_.Exception.Message)" -ForegroundColor DarkGray
+}
+
+# --- 7. ЗАПУСК ПРОЦЕССОВ И АКТИВАЦИЯ ПРОФИЛЕЙ ---
+Show-InstallerProgress -Step 7 -TotalSteps 8 -Activity "Запуск процессов и активация профилей разгона/OSD"
+$MsiExe = "$MsiDir\MSIAfterburner.exe"
+$task = Get-ScheduledTask -TaskName "MSIAfterburner" -ErrorAction SilentlyContinue
+
+if ($task) {
+    Write-InstallerLog -Level "INFO" -Action "Start" -Message "Запуск MSI Afterburner через системный планировщик задач (с правами наивысшего уровня)..."
+    Start-ScheduledTask -TaskName "MSIAfterburner"
+} elseif (Test-Path $MsiExe) {
+    Write-InstallerLog -Level "INFO" -Action "Start" -Message "Запуск MSI Afterburner напрямую с ключами -s -m (тихий трей-режим)..."
+    Start-Process -FilePath $MsiExe -ArgumentList "-s -m" -WindowStyle Hidden
+}
+
+# Адаптивное ожидание старта процессов (таймаут 5 секунд вместо фиксированного Start-Sleep)
+$procWaitSw = [System.Diagnostics.Stopwatch]::StartNew()
+$msiProc = $null
+$rtssProc = $null
+while ($procWaitSw.ElapsedMilliseconds -lt 5000) {
+    $msiProc = Get-Process -Name "MSIAfterburner" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $rtssProc = Get-Process -Name "RTSS" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($msiProc -and $rtssProc) { break }
+    Start-Sleep -Milliseconds 150
+}
+
+if ($msiProc) {
+    Write-InstallerLog -Level "OK" -Action "Process" -Message "MSI Afterburner успешно запущен (PID: $($msiProc.Id))." -Timer $procWaitSw
+} else {
+    Write-InstallerLog -Level "ERROR" -Action "Process" -Message "Не удалось обнаружить запущенный процесс MSIAfterburner.exe!"
+}
+
+if ($rtssProc) {
+    Write-InstallerLog -Level "OK" -Action "Process" -Message "RivaTuner Statistics Server (RTSS) запущен в фоне (PID: $($rtssProc.Id))."
+} else {
+    Write-InstallerLog -Level "WARN" -Action "Process" -Message "RTSS.exe пока не инициализирован или ожидает первого 3D-вызова."
+}
+
+# --- 8. ФИНАЛЬНАЯ ВЕРИФИКАЦИЯ И ИТОГОВЫЙ ОТЧЁТ ---
+Show-InstallerProgress -Step 8 -TotalSteps 8 -Activity "Финальная верификация параметров конфигураций"
+$vMsiCfg = "$MsiDir\Profiles\MSIAfterburner.cfg"
+$vRtssGlobal = "$RtssDir\Profiles\Global"
+$vRtssHotkey = "$RtssDir\Plugins\Client\HotkeyHandler.cfg"
+
+$chkEnableServer = if (Test-Path $vMsiCfg) { (Get-Content $vMsiCfg | Select-String "^EnableServer\s*=\s*(\d+)").Matches[0].Groups[1].Value } else { "N/A" }
+$chkSingleTray   = if (Test-Path $vMsiCfg) { (Get-Content $vMsiCfg | Select-String "^SingleTrayIconMode\s*=\s*(\d+)").Matches[0].Groups[1].Value } else { "N/A" }
+$chkAbHotkey     = if (Test-Path $vMsiCfg) { (Get-Content $vMsiCfg | Select-String "^OSDToggleHotkey\s*=\s*([0-9a-fA-F]+)").Matches[0].Groups[1].Value } else { "N/A" }
+$chkEnableOSD    = if (Test-Path $vRtssGlobal) { (Get-Content $vRtssGlobal | Select-String "^EnableOSD\s*=\s*(\d+)").Matches[0].Groups[1].Value } else { "N/A" }
+$chkRtssHotkey   = if (Test-Path $vRtssHotkey) { (Get-Content $vRtssHotkey | Select-String "^OSDToggleHotkey\s*=\s*([0-9a-fA-F]+)").Matches[0].Groups[1].Value } else { "N/A" }
+
+Write-InstallerLog -Level "INFO" -Action "Verify" -Message "Параметры Afterburner: EnableServer=$chkEnableServer, SingleTrayIconMode=$chkSingleTray, Hotkey=$chkAbHotkey"
+Write-InstallerLog -Level "INFO" -Action "Verify" -Message "Параметры RTSS: EnableOSD=$chkEnableOSD, Hotkey=$chkRtssHotkey"
+
+$script:InstallTimer.Stop()
+$totalSec = [math]::Round($script:InstallTimer.ElapsedMilliseconds / 1000, 2)
+
+Write-Host "`n==========================================================" -ForegroundColor Green
+Write-Host "                ИТОГОВЫЙ ОТЧЁТ УСТАНОВКИ                  " -ForegroundColor Green
+Write-Host "==========================================================" -ForegroundColor Green
+Write-Host ("  Статус MSI Afterburner : " + $(if ($isMsiInstalled) { "Уже установлен / Настроен" } else { "Установлен с нуля" })) -ForegroundColor White
+Write-Host ("  Процесс Afterburner    : " + $(if ($msiProc) { "Работает (PID: $($msiProc.Id))" } else { "Не запущен" })) -ForegroundColor White
+Write-Host ("  Статус RTSS            : " + $(if ($isRtssInstalled) { "Уже установлен / Настроен" } else { "Установлен с нуля" })) -ForegroundColor White
+Write-Host ("  Процесс RTSS           : " + $(if ($rtssProc) { "Работает в фоне (PID: $($rtssProc.Id))" } else { "Ожидает старта" })) -ForegroundColor White
+Write-Host ("  Иконка RTSS в трее     : " + $(if ($chkSingleTray -eq "1") { "СКРЫТА (SingleTrayIconMode = 1)" } else { "Видима" })) -ForegroundColor Cyan
+Write-Host ("  Оверлей по умолчанию   : " + $(if ($chkEnableOSD -eq "0") { "СКРЫТ (EnableOSD = 0)" } else { "Видим" })) -ForegroundColor Cyan
+Write-Host ("  Горячая клавиша OSD    : Alt + 1 (Синхронизировано: AB + RTSS)") -ForegroundColor Cyan
+Write-Host ("  Файл лога сессии       : $script:LogFile") -ForegroundColor DarkGray
+Write-Host ("  Общее время выполнения : $totalSec сек") -ForegroundColor Green
+Write-Host "==========================================================`n" -ForegroundColor Green
+
+Write-InstallerLog -Level "OK" -Action "Complete" -Message "Установка и настройка успешно завершены за $totalSec сек."
