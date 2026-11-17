@@ -40,7 +40,8 @@ To run a dry or live test of the installer:
 ```powershell
 # Launch the interactive menu or run directly:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup-Detailed-OSD.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\MSI-Afterburner-Moi.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\MSI-Afterburner-NextGen.ps1
 
 # Inspect execution logs
 Get-ChildItem .\Logs | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Get-Content
