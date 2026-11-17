@@ -15,7 +15,7 @@ assignees: ''
 - Windows Version & Build:
 - GPU Model:
 - NVIDIA Driver Version:
-- Executed Script: (e.g. `Setup-Esports-OSD.ps1`, `Setup-Detailed-OSD.ps1`)
+- Executed Script: (e.g. `MSI-Afterburner-Moi.ps1`, `MSI-Afterburner-NextGen.ps1`)
 
 ### Actual Behavior
 A clear description of what happened, including relevant console output from the `Logs/` directory.

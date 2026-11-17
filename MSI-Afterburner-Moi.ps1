@@ -45,7 +45,7 @@ function Show-InstallerProgress {
 function Test-AdministratorPrivileges {
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")
     if (-not $isAdmin) {
-        $realPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { "$script:ScriptDir\new 11.10.26 (moi).ps1" }
+        $realPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { "$script:ScriptDir\MSI-Afterburner-Moi.ps1" }
         Write-InstallerLog -Level "WARN" -Action "UAC" -Message "Требуются права Администратора. Перезапуск процесса с повышением прав..."
         Start-Process PowerShell.exe -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -File `"{0}`"" -f $realPath) -Verb RunAs
         Exit

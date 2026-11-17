@@ -1,14 +1,15 @@
-# ⚡ MSI Afterburner & RTSS Esports & Tuning Suite
+# ⚡ MSI Afterburner & RTSS Esports Suite
 
-[🇬🇧 English](README.md) | [🇷🇺 Русский](README_RU.md)
+[🇷🇺 Русский](README.md) | [🇬🇧 English](README_EN.md)
 
-A specialized, zero-bloat automation suite for installing, configuring, and optimizing **MSI Afterburner** and **RivaTuner Statistics Server (RTSS)** for competitive gaming and hardware benchmarking.
+Профессиональный набор готовых конфигураций и скриптов автоматической установки **MSI Afterburner** и **RivaTuner Statistics Server (RTSS)** под соревновательные игры и бенчмарки от **Vektor010**.
 
 ---
 
-## 🎯 Quick Start: 1-Click Interactive Setup
+## 🚀 Быстрый старт: Запуск в 1 клик
 
-Run the master interactive launcher from an elevated PowerShell terminal:
+В корне репозитория находится интерактивный установщик — **`Setup.ps1`**.  
+Запустите его через PowerShell от Администратора:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Setup.ps1
@@ -18,101 +19,160 @@ powershell -ExecutionPolicy Bypass -File .\Setup.ps1
 ========================================================================
              MSI AFTERBURNER & RTSS AUTOMATED SETUP SUITE               
 ========================================================================
-  [1] Esports Minimal OSD (Setup-Esports-OSD.ps1)
-  [2] Detailed Telemetry OSD (Setup-Detailed-OSD.ps1)
-  [3] Base Software Only (Setup-Base-NoOC.ps1)
-  [4] Apply RTX 5080 Undervolt Only (0.950V / 2850MHz)
-  [5] Apply RTX 3060 Undervolt Only (0.875V / 1875MHz)
-  [T] Run Quality Gate Tests (Syntax.Tests.ps1)
-  [Q] Exit
+  [1] NextGen — Киберспортивный OSD (MSI-Afterburner-NextGen.ps1)
+  [2] Moi — Детальный OSD для бенчмарков (MSI-Afterburner-Moi.ps1)
+  [3] Standalone — Чистая базовая установка (MSI-Afterburner-Standalone.ps1)
+  [4] Профиль андервольта: RTX 5080 (0.950V / 2850MHz)
+  [5] Профиль андервольта: RTX 3060 (0.875V / 1875MHz)
+  [T] Запустить тесты качества (Syntax.Tests.ps1)
+  [Q] Выход
 ========================================================================
 ```
 
 ---
 
-## 📊 Preset Comparison & Workload Fit
+## 📦 3 Основных Твика: Чем они отличаются?
 
-| Feature | 🟢 `Setup-Esports-OSD.ps1` *(Esports)* | 🟡 `Setup-Detailed-OSD.ps1` *(Benchmarking)* | ⚪ `Setup-Base-NoOC.ps1` *(Base)* |
+| Параметр | 🟢 `MSI-Afterburner-NextGen.ps1` | 🟡 `MSI-Afterburner-Moi.ps1` | ⚪ `MSI-Afterburner-Standalone.ps1` |
 |---|---|---|---|
-| **Primary Goal** | Minimal input latency and clean display for competitive titles (CS2, Apex, Warzone) | Stress-testing, thermal throttling detection, clock stability | Clean software installation without GPU or driver tuning |
-| **OSD Visual Style** | **Compact vertical stack**: FPS, Frametime (ms), 1% Low, 0.1% Low, aggregate CPU/GPU | **Full diagnostic dashboard**: telemetry for **every CPU core** (CPU0..CPU15), VRAM, fans, frametime graph | Standard clean overlay |
-| **Visual Clutter** | **0% clutter**: preserves radar, crosshair, HUD, and chat visibility | High-density telemetry for testers | Standard minimal |
-| **GPU Tuning / Undervolt**| Applies RTX 5080 undervolt (0.950V / 2850MHz) to Profile 1 | Applies RTX 5080 undervolt (0.950V / 2850MHz) to Profile 1 | **Untouched** (safe across all hardware) |
-| **NVIDIA Driver Profile** | Low-latency profile via NPI (Unlimited shader cache, P-State 1, Threaded On) | Low-latency driver profile via NPI | **Untouched** |
-| **Ghost Tray Mode** | ✅ Enabled (`SingleTrayIconMode = 1`) | ✅ Enabled (`SingleTrayIconMode = 1`) | ✅ Enabled (`SingleTrayIconMode = 1`) |
-| **OSD Hotkey** | <kbd>Alt</kbd> + <kbd>1</kbd> | <kbd>Alt</kbd> + <kbd>1</kbd> | <kbd>Alt</kbd> + <kbd>1</kbd> |
-| **Default Display State** | Hidden (`EnableOSD = 0`) | Hidden (`EnableOSD = 0`) | Hidden (`EnableOSD = 0`) |
+| **Название конфига** | **NextGen (Киберспорт)** | **Moi (Детальный / Бенчмарк)** | **Standalone (Чистый софт)** |
+| **Для чего создан** | Соревновательные шутеры (CS2, Apex, Warzone, Valorant) | Тестирование железа, поиск троттлинга, замер стабильности | Чистая установка без разгона и без модификации драйверов |
+| **Стиль OSD на экране** | **Компактный вертикальный стек**: только FPS, фреймтайм, 1% Low, 0.1% Low, общая температура и загрузка CPU/GPU | **Полная диагностика**: мониторинг частот, вольтажа и нагрева **каждого отдельного ядра CPU** (CPU0..CPU15), видеопамяти, кулеров, график фреймтайма | Базовый аккуратный оверлей |
+| **Нагрузка на зрение** | **0% визуального шума**: радар, прицел, таймеры и чат свободны | Информационный центр для тестеров | Стандартный ненавязчивый вид |
+| **Настройки GPU / Андервольт** | Включает профиль стабильного андервольта RTX 5080 (0.950V / 2850MHz) в Профиль 1 | Включает авторский профиль стабильного андервольта RTX 5080 (0.950V / 2850MHz) в Профиль 1 | **Не трогает частоты и кривые GPU** (подходит для абсолютно любой видеокарты) |
+| **Твики драйвера NVIDIA** | Включает киберспортивный профиль через NPI (Unlimited шейдерный кэш, P-State 1, Threaded On) | Включает киберспортивный профиль драйвера NVIDIA | **Не трогает драйвер NVIDIA** |
+| **Скрытие иконки RTSS в трее** | ✅ Да (`SingleTrayIconMode = 1`) | ✅ Да (`SingleTrayIconMode = 1`) | ✅ Да (`SingleTrayIconMode = 1`) |
+| **Хоткей переключения OSD** | <kbd>Alt</kbd> + <kbd>1</kbd> | <kbd>Alt</kbd> + <kbd>1</kbd> | <kbd>Alt</kbd> + <kbd>1</kbd> |
+| **Оверлей при старте игры** | Скрыт (`EnableOSD = 0`) | Скрыт (`EnableOSD = 0`) | Скрыт (`EnableOSD = 0`) |
 
 ---
 
-## ⌨️ In-Game Hotkeys
+## 🧭 Схема выбора конфигурации
 
-| Hotkey | Action | Mechanics |
+```mermaid
+flowchart TD
+    Start["Запуск Setup.ps1"] --> Choice{"Какая задача перед вами?"}
+    
+    Choice -->|"Играть в CS2 / шутеры, важен чистый экран и FPS"| NextGen["MSI-Afterburner-NextGen.ps1\n(Компактный OSD: FPS, Frametime, 1% Low, общие CPU/GPU)"]
+    Choice -->|"Тестировать ПК, смотреть частоты и температуры всех ядер"| Moi["MSI-Afterburner-Moi.ps1\n(Детальный OSD: поядерный CPU0..15, память, графики)"]
+    Choice -->|"Просто установить софт без разгона и твиков драйвера"| Standalone["MSI-Afterburner-Standalone.ps1\n(Чистая базовая установка)"]
+    
+    Start --> Profiles{"Нужен только андервольт конкретной карты?"}
+    Profiles -->|"GeForce RTX 5080"| P5080["profiles/RTX-5080-Undervolt.ps1\n(0.950V @ 2850MHz)"]
+    Profiles -->|"GeForce RTX 3060"| P3060["profiles/RTX-3060-Undervolt.ps1\n(0.875V @ 1875MHz)"]
+```
+
+---
+
+## ⌨️ Горячие клавиши (Управление прямо в игре)
+
+| Сочетание клавиш | Назначение | Поведение |
 |---|---|---|
-| **<kbd>Alt</kbd> + <kbd>1</kbd>** | **Toggle OSD Visibility** | Games start with a clean screen. Pressing **Alt + 1** instantly toggles telemetry. Synchronized between Afterburner and RTSS. |
-| **<kbd>Alt</kbd> + <kbd>F1</kbd>** | **Activate Profile 1 (Undervolt)** | Cool temperatures, silent acoustics, locked maximum boost clocks. |
-| **<kbd>Alt</kbd> + <kbd>F2</kbd>** | **Activate Profile 2 (Overclock / Stock)** | Maximum clock profile for pushing peak frame rates. |
+| **<kbd>Alt</kbd> + <kbd>1</kbd>** | **Включить / скрыть оверлей OSD** | По умолчанию оверлей не мешает и скрыт. Нажатие **Alt + 1** мгновенно включает или отключает показатели. Синхронизировано между Afterburner и RTSS. |
+| **<kbd>Alt</kbd> + <kbd>F1</kbd>** | **Загрузить Профиль 1 (Андервольт)** | Холодная видеокарта, тихие вентиляторы, отсутствие сброса частот от перегрева. |
+| **<kbd>Alt</kbd> + <kbd>F2</kbd>** | **Загрузить Профиль 2 (Разгон / Stock)** | Профиль предельной производительности. |
 
 ---
 
-## 🛡️ Engineering Guarantees
+## 🛡️ Ключевые инженерные принципы
 
-* **Ghost Mode (`SingleTrayIconMode = 1`):** Hides the secondary RTSS blue monitor icon from the taskbar notification area while keeping the background hooking engine active.
-* **Idempotent Speed Engine (< 5s):** Re-runs automatically detect installed binaries, skipping network downloads and repeated installations.
-* **Dynamic Hardware Matching:** Dynamically scans host GPU device IDs (`VEN_10DE...cfg`) rather than hardcoding static vendor strings.
-* **Safety First:** Creates automatic timestamped backups in `Profiles\Backup_YYYYMMDD_HHMMSS` before modifying configurations.
-* **Zero Syntax Errors (AST 0):** Every script passes PowerShell Abstract Syntax Tree validation and enforces standard UTF-8 BOM encoding.
+1. **Режим «Призрак» (`SingleTrayIconMode = 1`)**:
+   * Синяя иконка RTSS (монитор с цифрой 60) **скрыта из системного трея Windows**.
+   * Трей чистый — доступен только единый значок MSI Afterburner.
+2. **Чистый экран при запуске игры (`EnableOSD = 0`)**:
+   * При старте матча экран остается чистым. Оверлей активируется только по нажатию <kbd>Alt</kbd> + <kbd>1</kbd>.
+3. **Идемпотентность и скорость (до 5 секунд)**:
+   * Скрипт мгновенно определяет уже установленные компоненты. При повторном запуске пропускаются сетевые загрузки и повторные инсталляции.
+4. **Динамическое определение GPU**:
+   * Конфигурация видеокарты не привязана к одной строке: скрипт динамически связывает настройки с обнаруженным оборудованием (`VEN_10DE...`).
+5. **Безопасность и автоматические бэкапы**:
+   * Перед любым изменением конфигураций создается полная резервная копия в папку `Profiles\Backup_ГГГГММДД_ЧЧММСС`.
+6. **Полный аудит и тесты качества (18 проверок из 18)**:
+   * Все скрипты соответствуют строгому стандарту PowerShell AST (0 синтаксических ошибок) и кодировке UTF-8 с BOM.
 
 ---
 
-## 📂 Project Structure
+## 📂 Структура репозитория
 
 ```
 msi-afterburner-rtss/
-├── Setup.ps1                  # Interactive 1-click launcher
-├── Setup-Esports-OSD.ps1      # Esports compact OSD configuration
-├── Setup-Detailed-OSD.ps1     # Per-core detailed monitoring configuration
-├── Setup-Base-NoOC.ps1        # Pure software installer (no driver/GPU tweaks)
-├── README.md                  # This documentation (English)
-├── README_RU.md               # Detailed guide (Russian)
-├── AGENTS.md                  # Universal guidelines for AI agents
-├── LICENSE                    # Open source license
-├── profiles/                  # Hardware-specific undervolt profiles
-│   ├── RTX-5080-Undervolt.ps1 # 0.950V / 2850MHz undervolt curve
-│   └── RTX-3060-Undervolt.ps1 # 0.875V / 1875MHz undervolt curve
-├── tools/                     # Portable helper utilities
+├── Setup.ps1                       # Главное интерактивное меню (запуск в 1 клик)
+├── MSI-Afterburner-NextGen.ps1     # Твик 1: NextGen (компактный киберспортивный OSD)
+├── MSI-Afterburner-Moi.ps1         # Твик 2: Moi (детальный OSD, поядерный CPU0..15)
+├── MSI-Afterburner-Standalone.ps1  # Твик 3: Standalone (чистый софт без разгона)
+├── README.md                       # Главное руководство (Русский)
+├── README_EN.md                    # Международная версия (English)
+├── AGENTS.md                       # Единый стандарт навигации для любого ИИ
+├── LICENSE                         # Лицензия и условия
+├── profiles/                       # Автономные профили видеокарт
+│   ├── RTX-5080-Undervolt.ps1      # Профиль андервольта RTX 5080 (0.950V / 2850MHz)
+│   └── RTX-3060-Undervolt.ps1      # Профиль андервольта RTX 3060 (0.875V / 1875MHz)
+├── tools/                          # Низколатентные утилиты NVIDIA
 │   ├── nvidiaProfileInspector.exe
 │   ├── nvidiaProfileInspector.exe.config
 │   ├── Reference.xml
-│   └── NV-Esports-Ultimate.nip
-├── tests/                     # Quality assurance & validation
-│   └── Syntax.Tests.ps1       # Automated AST and contract verification
-└── docs/                      # Technical documentation
-    ├── architecture/          # Architecture & ADRs
+│   └── NV-Esports-Ultimate.nip     # Твик драйвера NVIDIA
+├── tests/                          # Тестовый комплекс качества
+│   ├── Syntax.Tests.ps1            # Тесты AST-парсера, BOM-заголовков и конфигураций
+│   └── ci-workflow.yml             # Шаблон GitHub Actions CI
+└── docs/                           # Структурированная документация
+    ├── architecture/               # Архитектура и технические решения
     │   ├── ARCHITECTURE.md
     │   └── DECISIONS.md
-    ├── development/           # Development & contributing guides
+    ├── development/                # Инструкции разработчика
     │   ├── DEVELOPMENT.md
     │   └── CONTRIBUTING.md
-    ├── guides/                # Support & edge-case workarounds
+    ├── guides/                     # Практические руководства и поддержка
     │   ├── KNOWN_ISSUES.md
     │   └── SUPPORT.md
-    ├── project/               # Project state & historical records
+    ├── project/                    # Состояние и история проекта
     │   ├── PROJECT_STATE.md
     │   ├── CHANGELOG.md
     │   └── ROADMAP.md
-    └── security/              # Security and privilege management
+    └── security/                   # Безопасность
         └── SECURITY.md
 ```
 
 ---
 
-## 🧪 Automated Verification
+## 🧪 Запуск автоматических тестов
 
-Run the built-in quality gate test suite locally:
+Для проверки целостности всех скриптов и профилей выполните:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Syntax.Tests.ps1
+powershell -ExecutionPolicy Bypass -File .\tests\Syntax.Tests.ps1
 ```
 
-All 7 scripts are checked for valid Abstract Syntax Trees (0 errors), standard 3-byte UTF-8 BOM headers, and live configuration key contracts.
+Результат:
+```
+=== ApexTuner Automated Test Suite ===
+Discovered 7 PowerShell scripts for evaluation.
+
+Test Group 1: Abstract Syntax Tree (AST) Validation
+  [PASS] AST Syntax: MSI-Afterburner-Moi.ps1
+  [PASS] AST Syntax: MSI-Afterburner-NextGen.ps1
+  [PASS] AST Syntax: MSI-Afterburner-Standalone.ps1
+  [PASS] AST Syntax: Setup.ps1
+  [PASS] AST Syntax: RTX-3060-Undervolt.ps1
+  [PASS] AST Syntax: RTX-5080-Undervolt.ps1
+  [PASS] AST Syntax: Syntax.Tests.ps1
+
+Test Group 2: UTF-8 BOM Encoding Integrity
+  [PASS] UTF-8 BOM Header: MSI-Afterburner-Moi.ps1
+  [PASS] UTF-8 BOM Header: MSI-Afterburner-NextGen.ps1
+  [PASS] UTF-8 BOM Header: MSI-Afterburner-Standalone.ps1
+  [PASS] UTF-8 BOM Header: Setup.ps1
+  [PASS] UTF-8 BOM Header: RTX-3060-Undervolt.ps1
+  [PASS] UTF-8 BOM Header: RTX-5080-Undervolt.ps1
+  [PASS] UTF-8 BOM Header: Syntax.Tests.ps1
+
+Test Group 3: Live Configuration Contracts
+  [PASS] MSIAfterburner.cfg contains SingleTrayIconMode=1
+  [PASS] MSIAfterburner.cfg contains EnableServer=1
+  [PASS] MSIAfterburner.cfg contains OSDToggleHotkey=00040031h
+  [PASS] HotkeyHandler.cfg contains OSDToggleHotkey=00040031
+
+==================================================
+Test Results: Total: 18 | Passed: 18 | Failed: 0
+==================================================
+```

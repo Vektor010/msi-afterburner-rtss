@@ -28,7 +28,7 @@ When reporting an issue on GitHub:
 2. **Attach Diagnostic Logs:**
    - Attach the latest session log from the repository's `Logs/` directory (e.g., `Logs/MsiInstaller_*.log`).
 3. **Describe Expected vs Actual Behavior:**
-   - Clearly state what script was run (`Setup.ps1`, `Setup-Esports-OSD.ps1`, `Setup-Detailed-OSD.ps1`, or `Setup-Base-NoOC.ps1`).
+   - Clearly state what script was run (`Setup.ps1`, `MSI-Afterburner-Moi.ps1`, `MSI-Afterburner-NextGen.ps1`, or `MSI-Afterburner-Standalone.ps1`).
    - Include any console error messages or screenshots.
 
 ---

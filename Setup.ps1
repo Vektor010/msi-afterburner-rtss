@@ -25,17 +25,17 @@ function Show-Header {
 
 while ($true) {
     Show-Header
-    Write-Host "  [1] Киберспортивный OSD (Setup-Esports-OSD.ps1)" -ForegroundColor Green
+    Write-Host "  [1] NextGen — Киберспортивный OSD (MSI-Afterburner-NextGen.ps1)" -ForegroundColor Green
     Write-Host "      -> Компактный минималистичный оверлей для CS2 / Apex / шутеров." -ForegroundColor Gray
     Write-Host "      -> Только важное: FPS, фреймтайм, 1% Low, 0.1% Low, общий CPU/GPU." -ForegroundColor Gray
     Write-Host "      -> Не перегружает экран и зрение в соревновательных играх.`n" -ForegroundColor Gray
 
-    Write-Host "  [2] Детальный OSD для бенчмарков (Setup-Detailed-OSD.ps1)" -ForegroundColor Yellow
+    Write-Host "  [2] Moi — Детальный OSD для бенчмарков (MSI-Afterburner-Moi.ps1)" -ForegroundColor Yellow
     Write-Host "      -> Максимальная поядерная телеметрия: частота, нагрузка и нагрев" -ForegroundColor Gray
     Write-Host "         КАЖДОГО ядра CPU (CPU0..CPU15), видеопамять, кулеры, график кадра." -ForegroundColor Gray
     Write-Host "      -> Идеально для стресс-тестов, поиска троттлинга и замера стабильности.`n" -ForegroundColor Gray
 
-    Write-Host "  [3] Чистая базовая установка (Setup-Base-NoOC.ps1)" -ForegroundColor White
+    Write-Host "  [3] Standalone — Чистая базовая установка (MSI-Afterburner-Standalone.ps1)" -ForegroundColor White
     Write-Host "      -> Установка MSI Afterburner + RTSS с тихим треем и хоткеем Alt+1." -ForegroundColor Gray
     Write-Host "      -> БЕЗ изменения частот GPU, кривых напряжения и профилей драйвера.`n" -ForegroundColor Gray
 
@@ -53,20 +53,20 @@ while ($true) {
 
     switch ($choice.ToUpper().Trim()) {
         "1" {
-            $target = Join-Path $root "Setup-Esports-OSD.ps1"
-            Write-Host "`nЗапуск Setup-Esports-OSD.ps1..." -ForegroundColor Green
+            $target = Join-Path $root "MSI-Afterburner-NextGen.ps1"
+            Write-Host "`nЗапуск MSI-Afterburner-NextGen.ps1..." -ForegroundColor Green
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File $target
             Read-Host "`nНажмите Enter для возврата в меню..."
         }
         "2" {
-            $target = Join-Path $root "Setup-Detailed-OSD.ps1"
-            Write-Host "`nЗапуск Setup-Detailed-OSD.ps1..." -ForegroundColor Yellow
+            $target = Join-Path $root "MSI-Afterburner-Moi.ps1"
+            Write-Host "`nЗапуск MSI-Afterburner-Moi.ps1..." -ForegroundColor Yellow
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File $target
             Read-Host "`nНажмите Enter для возврата в меню..."
         }
         "3" {
-            $target = Join-Path $root "Setup-Base-NoOC.ps1"
-            Write-Host "`nЗапуск Setup-Base-NoOC.ps1..." -ForegroundColor White
+            $target = Join-Path $root "MSI-Afterburner-Standalone.ps1"
+            Write-Host "`nЗапуск MSI-Afterburner-Standalone.ps1..." -ForegroundColor White
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File $target
             Read-Host "`nНажмите Enter для возврата в меню..."
         }

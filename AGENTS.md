@@ -36,13 +36,14 @@ Any AI coding agent (Claude, ChatGPT, Gemini, Copilot, Cursor) can locate all pr
 ## 3. Repository Layout & Ownership
 ```
 msi-afterburner-rtss/
-├── Setup.ps1                  # Interactive 1-click master launcher
-├── Setup-Esports-OSD.ps1      # Esports streamlined OSD variant (FPS, Frametime, 1% Low, aggregate CPU/GPU)
-├── Setup-Detailed-OSD.ps1     # Detailed monitoring installer: per-core telemetry (CPU0..15), RTX 5080/all GPU support
-├── Setup-Base-NoOC.ps1        # Pure software installer (no driver/GPU tweaks)
-├── README.md                  # Primary English overview & index
-├── README_RU.md               # Detailed Russian guide & quickstart
-├── AGENTS.md                  # Universal AI agent instruction hub (this file)
+├── Setup.ps1                       # Interactive 1-click master launcher
+├── MSI-Afterburner-NextGen.ps1     # Esports streamlined OSD variant (FPS, Frametime, 1% Low, aggregate CPU/GPU)
+├── MSI-Afterburner-Moi.ps1         # Detailed monitoring installer: per-core telemetry (CPU0..15), RTX 5080/all GPU support
+├── MSI-Afterburner-Standalone.ps1  # Pure software installer (no driver/GPU tweaks)
+├── README.md                       # Primary documentation (Russian)
+├── README_EN.md                    # International overview (English)
+├── README_RU.md                    # Complete Russian reference
+├── AGENTS.md                       # Universal AI agent instruction hub (this file)
 ├── LICENSE                    # Software license & terms
 ├── profiles/                  # Isolated GPU undervolt/clock curves
 │   ├── RTX-5080-Undervolt.ps1 # Verified RTX 5080 curve & memory offsets

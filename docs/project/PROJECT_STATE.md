@@ -32,9 +32,9 @@ The repository has been isolated into an autonomous, professional open-source pr
 
 ## 3. Active File Manifest & Purpose
 * [`Setup.ps1`](../../Setup.ps1): Interactive root launcher with administrator check and 1-click menu.
-* [`Setup-Esports-OSD.ps1`](../../Setup-Esports-OSD.ps1): Streamlined variant with minimalist vertical OSD (FPS, Frametime, 1% Low, 0.1% Low, aggregate CPU/GPU).
-* [`Setup-Detailed-OSD.ps1`](../../Setup-Detailed-OSD.ps1): Flagship installer featuring detailed per-core OSD (CPU0..15), RTX 5080 curve, NPI import, and 8-step progress engine.
-* [`Setup-Base-NoOC.ps1`](../../Setup-Base-NoOC.ps1): Pure monitoring setup without driver or GPU overclocking.
+* [`MSI-Afterburner-NextGen.ps1`](../../MSI-Afterburner-NextGen.ps1): Streamlined variant with minimalist vertical OSD (FPS, Frametime, 1% Low, 0.1% Low, aggregate CPU/GPU).
+* [`MSI-Afterburner-Moi.ps1`](../../MSI-Afterburner-Moi.ps1): Flagship installer featuring detailed per-core OSD (CPU0..15), RTX 5080 curve, NPI import, and 8-step progress engine.
+* [`MSI-Afterburner-Standalone.ps1`](../../MSI-Afterburner-Standalone.ps1): Pure monitoring setup without driver or GPU overclocking.
 * [`profiles/RTX-5080-Undervolt.ps1`](../../profiles/RTX-5080-Undervolt.ps1): Verified undervolt profile for NVIDIA GeForce RTX 5080 (0.950V / 2850MHz).
 * [`profiles/RTX-3060-Undervolt.ps1`](../../profiles/RTX-3060-Undervolt.ps1): Verified undervolt profile for NVIDIA GeForce RTX 3060 (0.875V / 1875MHz).
 * [`tools/NV-Esports-Ultimate.nip`](../../tools/NV-Esports-Ultimate.nip): Low-latency driver profile (Unlimited shader cache, P-State 1, 16x AF, low-latency 1).
