@@ -23,7 +23,6 @@ powershell -ExecutionPolicy Bypass -File .\Setup.ps1
   [2] Moi — Детальный OSD для бенчмарков (MSI-Afterburner-Moi.ps1)
   [3] Standalone — Чистая базовая установка (MSI-Afterburner-Standalone.ps1)
   [4] Профиль андервольта: RTX 5080 (0.950V / 2850MHz)
-  [5] Профиль андервольта: RTX 3060 (0.875V / 1875MHz)
   [T] Запустить тесты качества (Syntax.Tests.ps1)
   [Q] Выход
 ========================================================================
@@ -57,9 +56,8 @@ flowchart TD
     Choice -->|"Тестировать ПК, смотреть частоты и температуры всех ядер"| Moi["MSI-Afterburner-Moi.ps1\n(Детальный OSD: поядерный CPU0..15, память, графики)"]
     Choice -->|"Просто установить софт без разгона и твиков драйвера"| Standalone["MSI-Afterburner-Standalone.ps1\n(Чистая базовая установка)"]
     
-    Start --> Profiles{"Нужен только андервольт конкретной карты?"}
+    Start --> Profiles{"Применить только андервольт RTX 5080?"}
     Profiles -->|"GeForce RTX 5080"| P5080["profiles/RTX-5080-Undervolt.ps1\n(0.950V @ 2850MHz)"]
-    Profiles -->|"GeForce RTX 3060"| P3060["profiles/RTX-3060-Undervolt.ps1\n(0.875V @ 1875MHz)"]
 ```
 
 ---
@@ -105,8 +103,7 @@ msi-afterburner-rtss/
 ├── AGENTS.md                       # Единый стандарт навигации для любого ИИ
 ├── LICENSE                         # Лицензия и условия
 ├── profiles/                       # Автономные профили видеокарт
-│   ├── RTX-5080-Undervolt.ps1      # Профиль андервольта RTX 5080 (0.950V / 2850MHz)
-│   └── RTX-3060-Undervolt.ps1      # Профиль андервольта RTX 3060 (0.875V / 1875MHz)
+│   └── RTX-5080-Undervolt.ps1      # Профиль андервольта RTX 5080 (0.950V / 2850MHz)
 ├── tools/                          # Низколатентные утилиты NVIDIA
 │   ├── nvidiaProfileInspector.exe
 │   ├── nvidiaProfileInspector.exe.config

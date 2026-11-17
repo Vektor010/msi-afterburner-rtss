@@ -16,7 +16,7 @@ To provide the definitive, zero-friction, production-grade automation suite for 
 ---
 
 ## Milestone 2: v1.1.0 — Telemetry & Profiles (Q1 2027)
-* [ ] **Modular CLI Parameters:** Add support for `-Profile <Classic|NextGen>`, `-GpuPreset <5080|3060|Custom>`, and `-DryRun` flags.
+* [ ] **Modular CLI Parameters:** Add support for `-Profile <Moi|NextGen>`, `-GpuPreset <5080|Custom>`, and `-DryRun` flags.
 * [ ] **AMD Radeon & Intel Arc Profile Support:** Extend monitoring profiles to AMD RDNA and Intel Battlemage graphics architectures.
 * [ ] **Automated Benchmark Harness:** In-script synthetic load test to verify undervolt stability prior to locking frequencies.
 

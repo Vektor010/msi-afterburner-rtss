@@ -18,11 +18,10 @@ powershell -ExecutionPolicy Bypass -File .\Setup.ps1
 ========================================================================
              MSI AFTERBURNER & RTSS AUTOMATED SETUP SUITE               
 ========================================================================
-  [1] Esports Minimal OSD (Setup-Esports-OSD.ps1)
-  [2] Detailed Telemetry OSD (Setup-Detailed-OSD.ps1)
-  [3] Base Software Only (Setup-Base-NoOC.ps1)
+  [1] NextGen — Esports Minimal OSD (MSI-Afterburner-NextGen.ps1)
+  [2] Moi — Detailed Telemetry OSD (MSI-Afterburner-Moi.ps1)
+  [3] Standalone — Base Software Only (MSI-Afterburner-Standalone.ps1)
   [4] Apply RTX 5080 Undervolt Only (0.950V / 2850MHz)
-  [5] Apply RTX 3060 Undervolt Only (0.875V / 1875MHz)
   [T] Run Quality Gate Tests (Syntax.Tests.ps1)
   [Q] Exit
 ========================================================================
@@ -69,17 +68,17 @@ powershell -ExecutionPolicy Bypass -File .\Setup.ps1
 
 ```
 msi-afterburner-rtss/
-├── Setup.ps1                  # Interactive 1-click launcher
-├── Setup-Esports-OSD.ps1      # Esports compact OSD configuration
-├── Setup-Detailed-OSD.ps1     # Per-core detailed monitoring configuration
-├── Setup-Base-NoOC.ps1        # Pure software installer (no driver/GPU tweaks)
-├── README.md                  # This documentation (English)
-├── README_RU.md               # Detailed guide (Russian)
-├── AGENTS.md                  # Universal guidelines for AI agents
-├── LICENSE                    # Open source license
-├── profiles/                  # Hardware-specific undervolt profiles
-│   ├── RTX-5080-Undervolt.ps1 # 0.950V / 2850MHz undervolt curve
-│   └── RTX-3060-Undervolt.ps1 # 0.875V / 1875MHz undervolt curve
+├── Setup.ps1                       # Interactive 1-click launcher
+├── MSI-Afterburner-NextGen.ps1     # Esports compact OSD configuration
+├── MSI-Afterburner-Moi.ps1         # Per-core detailed monitoring configuration
+├── MSI-Afterburner-Standalone.ps1  # Pure software installer (no driver/GPU tweaks)
+├── README.md                       # Main documentation (Russian)
+├── README_EN.md                    # English overview
+├── README_RU.md                    # Detailed guide (Russian)
+├── AGENTS.md                       # Universal guidelines for AI agents
+├── LICENSE                         # Open source license
+├── profiles/                       # Hardware-specific undervolt profiles
+│   └── RTX-5080-Undervolt.ps1      # 0.950V / 2850MHz undervolt curve
 ├── tools/                     # Portable helper utilities
 │   ├── nvidiaProfileInspector.exe
 │   ├── nvidiaProfileInspector.exe.config

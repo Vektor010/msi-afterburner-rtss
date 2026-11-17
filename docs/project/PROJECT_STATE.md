@@ -36,7 +36,6 @@ The repository has been isolated into an autonomous, professional open-source pr
 * [`MSI-Afterburner-Moi.ps1`](../../MSI-Afterburner-Moi.ps1): Flagship installer featuring detailed per-core OSD (CPU0..15), RTX 5080 curve, NPI import, and 8-step progress engine.
 * [`MSI-Afterburner-Standalone.ps1`](../../MSI-Afterburner-Standalone.ps1): Pure monitoring setup without driver or GPU overclocking.
 * [`profiles/RTX-5080-Undervolt.ps1`](../../profiles/RTX-5080-Undervolt.ps1): Verified undervolt profile for NVIDIA GeForce RTX 5080 (0.950V / 2850MHz).
-* [`profiles/RTX-3060-Undervolt.ps1`](../../profiles/RTX-3060-Undervolt.ps1): Verified undervolt profile for NVIDIA GeForce RTX 3060 (0.875V / 1875MHz).
 * [`tools/NV-Esports-Ultimate.nip`](../../tools/NV-Esports-Ultimate.nip): Low-latency driver profile (Unlimited shader cache, P-State 1, 16x AF, low-latency 1).
 * [`tools/nvidiaProfileInspector.exe`](../../tools/nvidiaProfileInspector.exe): Portable NPI 2.4.0.4 binary for automated profile injection.
 * [`tests/Syntax.Tests.ps1`](../../tests/Syntax.Tests.ps1): Automated quality gate and syntax test suite (18 assertions).

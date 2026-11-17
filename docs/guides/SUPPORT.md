@@ -23,7 +23,7 @@ When reporting an issue on GitHub:
 
 1. **Provide System Details:**
    - Windows Version and OS Build (`winver` or `[System.Environment]::OSVersion`).
-   - GPU Model (e.g. GeForce RTX 5080, RTX 3060).
+   - GPU Model (e.g. GeForce RTX 5080).
    - NVIDIA Driver Version.
 2. **Attach Diagnostic Logs:**
    - Attach the latest session log from the repository's `Logs/` directory (e.g., `Logs/MsiInstaller_*.log`).

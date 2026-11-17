@@ -1465,7 +1465,7 @@ GraphColor=00FF00h
 Formula=
 "@
 Set-Content -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\MSIAfterburner.cfg" -Value $MsiAfterBurnerCfg -Force
-# --- РќРђР§РђР›Рћ Р‘Р›РћРљРђ Р РђР—Р“РћРќРђ (RTX 3060) ---
+# --- НАЧАЛО БЛОКА РАЗГОНА (RTX 5080) ---
 
 # 1. Р—Р°РїРёСЃС‹РІР°РµРј С„Р°Р№Р» РЅР°СЃС‚СЂРѕРµРє РІРёРґРµРѕРєР°СЂС‚С‹ (Р§Р°СЃС‚РѕС‚С‹, РљСѓСЂРІР°, Р›РёРјРёС‚С‹)
 $MyGpuFileName = "VEN_10DE&DEV_2C02&SUBSYS_176219DA&REV_A1&BUS_1&DEV_0&FN_0.cfg"
