@@ -1,0 +1,13 @@
+# Logs & temporary files
+Logs/
+*.log
+*.tmp
+*.bak
+*.zip
+inner.zip
+
+# System & editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
