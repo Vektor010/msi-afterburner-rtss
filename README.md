@@ -1,7 +1,5 @@
 # ⚡ MSI Afterburner & RTSS Esports Suite
 
-[🇷🇺 Русский](README.md) | [🇬🇧 English](README_EN.md)
-
 Профессиональный набор готовых конфигураций и скриптов автоматической установки **MSI Afterburner** и **RivaTuner Statistics Server (RTSS)** под соревновательные игры и бенчмарки от **Vektor010**.
 
 ---
@@ -98,11 +96,10 @@ msi-afterburner-rtss/
 ├── MSI-Afterburner-NextGen.ps1     # Твик 1: NextGen (компактный киберспортивный OSD)
 ├── MSI-Afterburner-Moi.ps1         # Твик 2: Moi (детальный OSD, поядерный CPU0..15)
 ├── MSI-Afterburner-Standalone.ps1  # Твик 3: Standalone (чистый софт без разгона)
-├── README.md                       # Главное руководство (Русский)
-├── README_EN.md                    # Международная версия (English)
-├── AGENTS.md                       # Единый стандарт навигации для любого ИИ
-├── LICENSE                         # Лицензия и условия
-├── profiles/                       # Автономные профили видеокарт
+├── README.md                       # Главное руководство пользователя
+├── AGENTS.md                       # Инструкции для ИИ-агентов
+├── LICENSE                         # Лицензия
+├── profiles/                       # Профили видеокарты
 │   └── RTX-5080-Undervolt.ps1      # Профиль андервольта RTX 5080 (0.950V / 2850MHz)
 ├── tools/                          # Низколатентные утилиты NVIDIA
 │   ├── nvidiaProfileInspector.exe
@@ -110,24 +107,11 @@ msi-afterburner-rtss/
 │   ├── Reference.xml
 │   └── NV-Esports-Ultimate.nip     # Твик драйвера NVIDIA
 ├── tests/                          # Тестовый комплекс качества
-│   ├── Syntax.Tests.ps1            # Тесты AST-парсера, BOM-заголовков и конфигураций
-│   └── ci-workflow.yml             # Шаблон GitHub Actions CI
-└── docs/                           # Структурированная документация
-    ├── architecture/               # Архитектура и технические решения
-    │   ├── ARCHITECTURE.md
-    │   └── DECISIONS.md
-    ├── development/                # Инструкции разработчика
-    │   ├── DEVELOPMENT.md
-    │   └── CONTRIBUTING.md
-    ├── guides/                     # Практические руководства и поддержка
-    │   ├── KNOWN_ISSUES.md
-    │   └── SUPPORT.md
-    ├── project/                    # Состояние и история проекта
-    │   ├── PROJECT_STATE.md
-    │   ├── CHANGELOG.md
-    │   └── ROADMAP.md
-    └── security/                   # Безопасность
-        └── SECURITY.md
+│   └── Syntax.Tests.ps1            # Тесты AST-парсера, BOM-заголовков и конфигураций
+└── docs/                           # Дополнительная документация
+    ├── ARCHITECTURE.md             # Карта памяти процессов, IPC и хуки RTSS
+    ├── CHANGELOG.md                # История версий
+    └── KNOWN_ISSUES.md             # Ограничения и пути их обхода
 ```
 
 ---

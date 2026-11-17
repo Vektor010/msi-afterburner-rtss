@@ -17,19 +17,10 @@
 
 ---
 
-## 2. Universal Documentation Index for AI Agents
-Any AI coding agent (Claude, ChatGPT, Gemini, Copilot, Cursor) can locate all project documentation via these deterministic paths:
-
-* **Architecture & IPC:** [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md)
-* **Architectural Decisions (ADR):** [`docs/architecture/DECISIONS.md`](docs/architecture/DECISIONS.md)
-* **Current Project State:** [`docs/project/PROJECT_STATE.md`](docs/project/PROJECT_STATE.md)
-* **Project Roadmap:** [`docs/project/ROADMAP.md`](docs/project/ROADMAP.md)
-* **Changelog & History:** [`docs/project/CHANGELOG.md`](docs/project/CHANGELOG.md)
-* **Development & Test Guide:** [`docs/development/DEVELOPMENT.md`](docs/development/DEVELOPMENT.md)
-* **Contribution Guidelines:** [`docs/development/CONTRIBUTING.md`](docs/development/CONTRIBUTING.md)
-* **Known Issues & Workarounds:** [`docs/guides/KNOWN_ISSUES.md`](docs/guides/KNOWN_ISSUES.md)
-* **Support & Diagnostics:** [`docs/guides/SUPPORT.md`](docs/guides/SUPPORT.md)
-* **Security & Elevation Policy:** [`docs/security/SECURITY.md`](docs/security/SECURITY.md)
+## 2. Universal Documentation Index
+* **Architecture & Hook IPC:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+* **Changelog & History:** [`docs/CHANGELOG.md`](docs/CHANGELOG.md)
+* **Known Issues & Workarounds:** [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md)
 
 ---
 
@@ -41,41 +32,21 @@ msi-afterburner-rtss/
 ├── MSI-Afterburner-Moi.ps1         # Detailed monitoring installer: per-core telemetry (CPU0..15), RTX 5080/all GPU support
 ├── MSI-Afterburner-Standalone.ps1  # Pure software installer (no driver/GPU tweaks)
 ├── README.md                       # Primary documentation (Russian)
-├── README_EN.md                    # International overview (English)
-├── README_RU.md                    # Complete Russian reference
 ├── AGENTS.md                       # Universal AI agent instruction hub (this file)
-├── LICENSE                    # Software license & terms
+├── LICENSE                         # Software license & terms
 ├── profiles/                       # Isolated GPU undervolt/clock curves
 │   └── RTX-5080-Undervolt.ps1      # Verified RTX 5080 curve & memory offsets
-├── tools/                     # Portable binaries & low-latency profiles
+├── tools/                          # Portable binaries & low-latency profiles
 │   ├── nvidiaProfileInspector.exe
 │   ├── nvidiaProfileInspector.exe.config
 │   ├── Reference.xml
 │   └── NV-Esports-Ultimate.nip
-├── tests/                     # Automated quality gates
-│   └── Syntax.Tests.ps1       # AST syntax & encoding validator
-├── docs/                      # Categorized documentation suite
-│   ├── architecture/          # System design & ADRs
-│   │   ├── ARCHITECTURE.md
-│   │   └── DECISIONS.md
-│   ├── development/           # Developer manuals & contributing rules
-│   │   ├── DEVELOPMENT.md
-│   │   └── CONTRIBUTING.md
-│   ├── guides/                # Edge cases, troubleshooting & support
-│   │   ├── KNOWN_ISSUES.md
-│   │   └── SUPPORT.md
-│   ├── project/               # Project state, history & milestones
-│   │   ├── PROJECT_STATE.md
-│   │   ├── CHANGELOG.md
-│   │   └── ROADMAP.md
-│   └── security/              # Vulnerability reporting & UAC security
-│       └── SECURITY.md
-├── assets/                    # Media & visual materials
-│   ├── branding/              # Logos, banners & identity
-│   ├── screenshots/           # OSD previews & telemetry captures
-│   ├── animations/            # Visual workflow demonstrations
-│   └── diagrams/              # Architectural schemas
-└── Logs/                      # Auto-generated execution logs (git-ignored)
+├── tests/                          # Automated quality gates
+│   └── Syntax.Tests.ps1            # AST syntax & encoding validator
+└── docs/                           # Technical documentation
+    ├── ARCHITECTURE.md
+    ├── CHANGELOG.md
+    └── KNOWN_ISSUES.md
 ```
 
 ---

@@ -3359,8 +3359,8 @@ Remove-Item "$env:AppData\Microsoft\Windows\Start Menu\Programs\RivaTuner Statis
 Write-Host "Применение киберспортивного профиля драйвера NVIDIA..." -ForegroundColor Yellow
 $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
 $npiDir = "$env:TEMP\npi"
-$npiExe = if (Test-Path "$scriptDir\nvidiaProfileInspector.exe") { "$scriptDir\nvidiaProfileInspector.exe" } else { "$npiDir\nvidiaProfileInspector.exe" }
-$localNip = if (Test-Path "$scriptDir\NV-Esports-Ultimate.nip") { "$scriptDir\NV-Esports-Ultimate.nip" } else { "$npiDir\NV-Esports-Ultimate.nip" }
+$npiExe = if (Test-Path "$scriptDir\tools\nvidiaProfileInspector.exe") { "$scriptDir\tools\nvidiaProfileInspector.exe" } elseif (Test-Path "$scriptDir\nvidiaProfileInspector.exe") { "$scriptDir\nvidiaProfileInspector.exe" } else { "$npiDir\nvidiaProfileInspector.exe" }
+$localNip = if (Test-Path "$scriptDir\tools\NV-Esports-Ultimate.nip") { "$scriptDir\tools\NV-Esports-Ultimate.nip" } elseif (Test-Path "$scriptDir\NV-Esports-Ultimate.nip") { "$scriptDir\NV-Esports-Ultimate.nip" } else { "$npiDir\NV-Esports-Ultimate.nip" }
 try {
     if (-not (Test-Path $npiExe)) {
         New-Item -Path $npiDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
