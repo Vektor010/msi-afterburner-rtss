@@ -56,10 +56,23 @@ if (Test-Path $cfgPath) {
     Write-Host "  [SKIP] MSI Afterburner is not installed in standard directory; live contract test skipped." -ForegroundColor DarkGray
 }
 
-$rtssHotkey = "C:\Program Files (x86)\RivaTuner Statistics Server\Plugins\Client\HotkeyHandler.cfg"
+$rtssHotkey = "C:\Program Files (x86)\RivaTuner Statistics Server\Plugins64\Client\HotkeyHandler.cfg"
+if (-not (Test-Path $rtssHotkey)) {
+    $rtssHotkey = "C:\Program Files (x86)\RivaTuner Statistics Server\Plugins\Client\HotkeyHandler.cfg"
+}
 if (Test-Path $rtssHotkey) {
     $content = Get-Content $rtssHotkey -Raw
     Assert-Test -Name "HotkeyHandler.cfg contains OSDToggleHotkey=00040031" -Condition ($content -match "OSDToggleHotkey\s*=\s*00040031")
+}
+
+# 4. Static Analyzer Error Gate (if PSScriptAnalyzer module is present)
+if (Get-Module -ListAvailable -Name PSScriptAnalyzer) {
+    Write-Host "`nTest Group 4: PSScriptAnalyzer Error Checks" -ForegroundColor Yellow
+    foreach ($s in $scripts) {
+        $psaErrors = @(Invoke-ScriptAnalyzer -Path $s.FullName -Severity Error)
+        $errInfo = if ($psaErrors.Count -gt 0) { "$($psaErrors[0].RuleName) at L$($psaErrors[0].Line)" } else { "" }
+        Assert-Test -Name "PSScriptAnalyzer (0 Errors): $($s.Name)" -Condition ($psaErrors.Count -eq 0) -Details $errInfo
+    }
 }
 
 Write-Host "`n==================================================" -ForegroundColor Cyan

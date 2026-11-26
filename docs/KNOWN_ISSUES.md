@@ -3,7 +3,7 @@
 ### 1. Manual Access to RTSS GUI while in Ghost Mode
 * **Symptom:** Double-clicking the notification tray area does not open the RTSS configuration window.  
 * **Root Cause:** By design, `SingleTrayIconMode = 1` in `MSIAfterburner.cfg` suppresses the RTSS tray icon to eliminate taskbar clutter.  
-* **Workaround:** Launch RTSS via the Windows Start Menu shortcut or directly execute `C:\Program Files (x86)\RivaTuner Statistics Server\RTSS.exe`. Alternatively, set `SingleTrayIconMode = 0` if continuous GUI access is desired.
+* **Workaround:** Directly execute `C:\Program Files (x86)\RivaTuner Statistics Server\RTSS.exe` (or open via Win+R). Alternatively, set `SingleTrayIconMode = 0` in `MSIAfterburner.cfg` if continuous tray GUI access is desired.
 
 ---
 

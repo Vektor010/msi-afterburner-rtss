@@ -1,49 +1,114 @@
 ﻿﻿# SCRIPT RUN AS ADMIN
-If (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator"))
-{Start-Process PowerShell.exe -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -File `"{0}`"" -f $PSCommandPath) -Verb RunAs
-Exit}
-$Host.UI.RawUI.WindowTitle = $myInvocation.MyCommand.Definition + " (Administrator)"
+If (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")) {
+    $realPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { Join-Path (Get-Location).Path "MSI-Afterburner-Standalone.ps1" }
+    Start-Process PowerShell.exe -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -File `"{0}`"" -f $realPath) -Verb RunAs
+    Exit
+}
+$Host.UI.RawUI.WindowTitle = "MSI Afterburner + RTSS Standalone [Administrator]"
 $Host.UI.RawUI.BackgroundColor = "Black"
 $Host.PrivateData.ProgressBackgroundColor = "Black"
 $Host.PrivateData.ProgressForegroundColor = "White"
 Clear-Host
 
-# SCRIPT CHECK INTERNET
-if (!(Test-Connection -ComputerName "8.8.8.8" -Count 1 -Quiet -ErrorAction SilentlyContinue)) {
-Write-Host "Internet Connection Required`n" -ForegroundColor Red
-Pause
-exit
-}
-
-# SCRIPT SILENT
-$progresspreference = 'silentlycontinue'
+$ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-Write-Host "Installing: MSI Afterburner. Please wait...`n"
-Write-Host "GPU 'Power' & 'Power Percent' logging disabled"
-Write-Host "Causes FPS and 1% low issues`n"
+$MsiDir = "$env:SystemDrive\Program Files (x86)\MSI Afterburner"
+$RtssDir = "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server"
+$MsiExe = "$MsiDir\MSIAfterburner.exe"
+$RtssExe = "$RtssDir\RTSS.exe"
 
-# download msi afterburner 4.6.7 beta 2 (official msi.com, includes new RTSS beta)
-# even newer betas appear here: https://www.guru3d.com/download/msi-afterburner-beta-download/
-$AbZip = "$env:TEMP\msiafterburner467.zip"
-$AbDir = "$env:TEMP\msiafterburner467"
-try {
-    Invoke-WebRequest -Uri "https://download.msi.com/uti_exe/vga/MSIAfterburnerSetup467Beta2.zip" -OutFile $AbZip -UseBasicParsing -ErrorAction Stop
-    Expand-Archive -Path $AbZip -DestinationPath $AbDir -Force
-    $AbSetup = (Get-ChildItem -Path $AbDir -Filter "*.exe" -Recurse | Select-Object -First 1).FullName
-} catch {
-    Write-Host "MSI beta link failed, falling back to stable 4.6.6 build`n" -ForegroundColor Yellow
-    $AbSetup = "$env:TEMP\msiafterburner.exe"
-    Invoke-WebRequest -Uri "https://github.com/FR33THYFR33THY/Ultimate/releases/download/Files/msiafterburner.exe" -OutFile $AbSetup -UseBasicParsing
+Write-Host "==========================================================" -ForegroundColor DarkCyan
+Write-Host "   MSI Afterburner & RTSS: Чистая установка (Standalone)  " -ForegroundColor Cyan
+Write-Host "==========================================================" -ForegroundColor DarkCyan
+Write-Host "GPU 'Power' & 'Power Percent' logging disabled (prevents 1% low stutter)`n" -ForegroundColor DarkGray
+
+$isMsiInstalled = Test-Path $MsiExe
+$isRtssInstalled = Test-Path $RtssExe
+
+if ($isMsiInstalled -and $isRtssInstalled) {
+    Write-Host "[OK] MSI Afterburner и RTSS уже установлены. Пропуск загрузки." -ForegroundColor Green
+} else {
+    $hasNet = [System.Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable()
+    if (-not $hasNet) {
+        Write-Host "Internet Connection Required`n" -ForegroundColor Red
+        Pause
+        exit
+    }
+
+    $AbZip = "$env:TEMP\msiafterburner467.zip"
+    $AbDir = "$env:TEMP\msiafterburner467"
+    $AbSetup = $null
+    try {
+        Write-Host "[INFO] Скачивание MSI Afterburner 4.6.7 Beta 2..." -ForegroundColor White
+        Invoke-WebRequest -Uri "https://download.msi.com/uti_exe/vga/MSIAfterburnerSetup467Beta2.zip" -OutFile $AbZip -UseBasicParsing -ErrorAction Stop
+        Expand-Archive -Path $AbZip -DestinationPath $AbDir -Force
+        $WrapperExe = (Get-ChildItem -Path $AbDir -Filter "*.exe" -Recurse | Select-Object -First 1).FullName
+        try {
+            $asm = [System.Reflection.Assembly]::Load([System.IO.File]::ReadAllBytes($WrapperExe))
+            $rm = New-Object System.Resources.ResourceManager("MSIAfterburnerSetup.Properties.Resources", $asm)
+            $innerBytes = $rm.GetObject("MSIAfterburnerSetupFile")
+            $rm.ReleaseAllResources()
+            if ($innerBytes) {
+                $innerZip = "$AbDir\inner.zip"
+                [System.IO.File]::WriteAllBytes($innerZip, $innerBytes)
+                Expand-Archive -Path $innerZip -DestinationPath "$AbDir\real" -Force
+                $AbSetup = (Get-ChildItem -Path "$AbDir\real" -Filter "*.exe" | Select-Object -First 1).FullName
+            } else {
+                $AbSetup = $WrapperExe
+            }
+        } catch {
+            $AbSetup = $WrapperExe
+        }
+    } catch {
+        Write-Host "MSI beta link failed, falling back to stable release`n" -ForegroundColor Yellow
+        $AbSetup = "$env:TEMP\msiafterburner.exe"
+        Invoke-WebRequest -Uri "https://github.com/FR33THYFR33THY/Ultimate/releases/download/Files/msiafterburner.exe" -OutFile $AbSetup -UseBasicParsing
+    }
+
+    if (!$AbSetup -or !(Test-Path $AbSetup)) {
+        Write-Host "ERROR: installer download failed, nothing to install!" -ForegroundColor Red
+        Pause
+        exit
+    }
+
+    Get-Process -Name "MSIAfterburner", "RTSS" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    $ifeo = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+    $redistList = @("dxwebsetup.exe", "VCRedistWebSetup.exe", "vc_redist.x86.exe", "vc_redist.x64.exe")
+    foreach ($exe in $redistList) {
+        New-Item -Path "$ifeo\$exe" -Force | Out-Null
+        Set-ItemProperty -Path "$ifeo\$exe" -Name "Debugger" -Value "rundll32.exe"
+    }
+    try {
+        Start-Process -FilePath $AbSetup -ArgumentList "/S" -WindowStyle Hidden -Wait
+        $rtssSetup = "$MsiDir\Redist\RTSSSetup.exe"
+        if (Test-Path $rtssSetup) {
+            Start-Process -FilePath $rtssSetup -ArgumentList "/S" -WindowStyle Hidden -Wait
+        }
+    } finally {
+        foreach ($exe in $redistList) {
+            Remove-Item -Path "$ifeo\$exe" -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item -Path $AbZip -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $AbDir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "$env:TEMP\msiafterburner.exe" -Force -ErrorAction SilentlyContinue
+    }
 }
 
-# install msi afterburner
-if (!$AbSetup -or !(Test-Path $AbSetup)) {
-    Write-Host "ERROR: installer download failed, nothing to install!" -ForegroundColor Red
-    Pause
-    exit
+# Остановка активных процессов и создание резервной копии перед перезаписью конфигов
+Get-Process -Name "MSIAfterburner", "RTSS" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+$backupTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+foreach ($srcPair in @(
+    @{ Src = "$MsiDir\Profiles"; Dst = "$MsiDir\Profiles\Backup_$backupTimestamp" },
+    @{ Src = "$RtssDir\Profiles"; Dst = "$RtssDir\Profiles\Backup_$backupTimestamp" }
+)) {
+    if (Test-Path $srcPair.Src) {
+        New-Item -Path $srcPair.Dst -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+        Get-ChildItem -Path $srcPair.Src -Filter "*.cfg" -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination $srcPair.Dst -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
-Start-Process -wait $AbSetup -ArgumentList "/S"
 
 # new profiles folder
 New-Item -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner" -Name "Profiles" -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
@@ -3129,7 +3194,11 @@ EnableHooking		= 1
 "@
 Set-Content -Path "$RtssRoot\ProfileTemplates\FurMark.exe.cfg" -Value $FurMarkExeCfg -Force
 
-# ---------- 4. ПРОВЕРКА РЕЗУЛЬТАТА ----------
+# ---------- 4. ЗАПУСК И ПРОВЕРКА РЕЗУЛЬТАТА ----------
+if (Test-Path $MsiExe) {
+    Start-Process -FilePath $MsiExe -ArgumentList "-s -m" -WindowStyle Hidden
+}
+
 Write-Host "`nCheck:"
 $files = @(
 "$env:SystemDrive\Program Files (x86)\MSI Afterburner\MSIAfterburner.exe",
@@ -3144,15 +3213,11 @@ $files = @(
 "$RtssRoot\ProfileTemplates\FurMark.exe.cfg"
 )
 foreach ($f in $files) {
-if (Test-Path $f) { Write-Host ("OK    " + $f) -ForegroundColor Green }
-else { Write-Host ("FAIL  " + $f) -ForegroundColor Red }
+    if (Test-Path $f) { Write-Host ("OK    " + $f) -ForegroundColor Green }
+    else { Write-Host ("FAIL  " + $f) -ForegroundColor Red }
 }
 
-# RTSS из комплекта Afterburner может быть без редактора оверлеев - тогда fr33thy.ovl работать не будет
 if (!(Test-Path "$RtssClient\OverlayEditor.dll")) {
-Write-Host "`nWARNING: RTSS has no OverlayEditor.dll - overlay fr33thy will NOT work." -ForegroundColor Yellow
-Write-Host "Install RTSS 7.3.7 on top (settings are kept), page opened in browser:" -ForegroundColor Yellow
-Write-Host "https://www.guru3d.com/download/rtss-rivatuner-statistics-server-download/"
-Start-Process "https://www.guru3d.com/download/rtss-rivatuner-statistics-server-download/"
+    Write-Host "`n[INFO] OverlayEditor.dll не обнаружен (стандартный OSD Afterburner работает штатно; для ручных .ovl-шаблонов можно доустановить RTSS с guru3d.com)." -ForegroundColor Yellow
 }
 

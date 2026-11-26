@@ -75,7 +75,7 @@ while ($true) {
             exit 0
         }
         default {
-            Write-Host "Неверный выбор. Пожалуйста, введите цифру от 1 до 5, T или Q." -ForegroundColor Red
+            Write-Host "Неверный выбор. Пожалуйста, введите цифру от 1 до 3, T или Q." -ForegroundColor Red
             Start-Sleep -Seconds 1
         }
     }

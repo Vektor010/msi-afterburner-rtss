@@ -110,11 +110,12 @@ To reset to a clean baseline with no overclocking or curves, simply run `[3] Sta
 | **Target Use Case** | Competitive Shooters (CS2, Apex) | Hardware Benchmarking | Pure Monitoring |
 | **HUD Screen Footprint** | 5% (Right-aligned compact) | 25% (Full per-core telemetry) | Minimal |
 | **FPS & Frametime Graph (ms)** | ✅ Yes | ✅ Yes | ✅ Yes |
-| **1% Low & 0.1% Low FPS** | ✅ Yes | ✅ Yes | ⚙️ Optional |
-| **Per-Core CPU0..15 Monitoring** | ❌ Aggregate Package | ✅ All cores individually | ❌ Disabled |
+| **1% Low & 0.1% Low FPS** | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Per-Core CPU0..15 Monitoring** | ❌ Aggregate Package | ✅ All cores individually | ✅ All cores individually |
 | **Ghost Tray Mode (`SingleTrayIconMode`)** | ✅ Enabled | ✅ Enabled | ✅ Enabled |
 | **OSD Toggle Hotkey** | <kbd>Alt</kbd> + <kbd>1</kbd> | <kbd>Alt</kbd> + <kbd>1</kbd> | <kbd>Alt</kbd> + <kbd>1</kbd> |
-| **GPU Voltage / Clock Alteration** | 🔒 Safe Profile | ⚡ RTX 5080 Undervolt | 🛡️ Stock (No Overclock) |
+| **GPU Voltage / Clock Alteration** | ⚡ RTX 5080 only (others stock) | ⚡ RTX 5080 only (others stock) | 🛡️ Stock (No Overclock) |
+| **NVIDIA Driver Profile (NPI)** | ✅ NVIDIA GPUs only | ✅ NVIDIA GPUs only | 🛡️ Untouched |
 | **AMD & Intel Compatibility** | ✅ Full | ✅ Full | ✅ Full |
 
 ---
@@ -171,7 +172,7 @@ powershell -ExecutionPolicy Bypass -File .\tests\Syntax.Tests.ps1
 
 ```
 ==================================================
-Test Results: Total: 14 | Passed: 14 | Failed: 0
+Test Results: Total: 19 | Passed: 19 | Failed: 0
 ==================================================
 ```
 

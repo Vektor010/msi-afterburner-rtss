@@ -8,6 +8,7 @@ $script:InstallTimer = [System.Diagnostics.Stopwatch]::StartNew()
 $script:ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
 $script:LogDir = Join-Path $script:ScriptDir "Logs"
 if (-not (Test-Path $script:LogDir)) { New-Item -Path $script:LogDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null }
+Get-ChildItem -Path $script:LogDir -Filter "MsiInstaller_Esports_*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -Skip 9 | Remove-Item -Force -ErrorAction SilentlyContinue
 $script:LogFile = Join-Path $script:LogDir ("MsiInstaller_Esports_" + (Get-Date -Format "yyyy-MM-dd_HH-mm-ss") + ".log")
 
 function Write-InstallerLog {
@@ -33,7 +34,9 @@ function Write-InstallerLog {
     Write-Host $logLine -ForegroundColor $color
     try {
         [System.IO.File]::AppendAllText($script:LogFile, "$logLine`r`n", [System.Text.Encoding]::UTF8)
-    } catch {}
+    } catch {
+        Write-Debug $_.Exception.Message
+    }
 }
 
 function Show-InstallerProgress {
@@ -55,27 +58,34 @@ function Test-AdministratorPrivileges {
 
 function Stop-ComponentGraceful {
     param([string[]]$ProcessNames, [int]$TimeoutMs = 2500)
+    $closedAny = $false
     foreach ($pName in $ProcessNames) {
         $procs = Get-Process -Name $pName -ErrorAction SilentlyContinue
         foreach ($proc in $procs) {
-            Write-InstallerLog -Level "INFO" -Action "Process" -Message "Отправка запроса на штатное закрытие процесса $pName (PID: $($proc.Id))..."
-            $proc.CloseMainWindow() | Out-Null
+            if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
+                Write-InstallerLog -Level "INFO" -Action "Process" -Message "Отправка запроса на штатное закрытие процесса $pName (PID: $($proc.Id))..."
+                if ($proc.CloseMainWindow()) { $closedAny = $true }
+            }
         }
     }
-    $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
-        $alive = Get-Process -Name $ProcessNames -ErrorAction SilentlyContinue
-        if (-not $alive) {
-            Write-InstallerLog -Level "OK" -Action "Process" -Message "Все процессы успешно остановлены штатно." -Timer $sw
-            return
+    if ($closedAny) {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
+            $alive = Get-Process -Name $ProcessNames -ErrorAction SilentlyContinue
+            if (-not $alive) {
+                $sw.Stop()
+                Write-InstallerLog -Level "OK" -Action "Process" -Message "Все процессы успешно остановлены штатно." -Timer $sw
+                return
+            }
+            Start-Sleep -Milliseconds 100
         }
-        Start-Sleep -Milliseconds 100
+        $sw.Stop()
     }
     $stillAlive = Get-Process -Name $ProcessNames -ErrorAction SilentlyContinue
     if ($stillAlive) {
-        Write-InstallerLog -Level "WARN" -Action "Process" -Message "Процессы не ответили на штатное закрытие. Принудительное завершение..."
+        Write-InstallerLog -Level "INFO" -Action "Process" -Message "Завершение фоновых процессов ($($stillAlive.ProcessName -join ', '))..."
         $stillAlive | Stop-Process -Force -ErrorAction SilentlyContinue
-        Write-InstallerLog -Level "OK" -Action "Process" -Message "Процессы принудительно остановлены."
+        Write-InstallerLog -Level "OK" -Action "Process" -Message "Процессы остановлены."
     }
 }
 
@@ -124,12 +134,12 @@ if ($isMsiInstalled -and $isRtssInstalled) {
 } else {
     Show-InstallerProgress -Step 3 -TotalSteps 8 -Activity "Загрузка и тихая установка компонентов"
     Write-InstallerLog -Level "INFO" -Action "Download" -Message "Требуется установка. Проверка сетевого подключения..."
-    if (!(Test-Connection -ComputerName "8.8.8.8" -Count 1 -Quiet -ErrorAction SilentlyContinue) -and !([System.Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable())) {
+    if (-not [System.Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable()) {
         Write-InstallerLog -Level "ERROR" -Action "Network" -Message "Сетевое подключение отсутствует. Установка невозможна."
         Pause
         exit
     }
-    
+
     $AbZip = "$env:TEMP\msiafterburner467.zip"
     $AbDir = "$env:TEMP\msiafterburner467"
     $dlTimer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -138,23 +148,35 @@ if ($isMsiInstalled -and $isRtssInstalled) {
         Invoke-WebRequest -Uri "https://download.msi.com/uti_exe/vga/MSIAfterburnerSetup467Beta2.zip" -OutFile $AbZip -UseBasicParsing -ErrorAction Stop
         Expand-Archive -Path $AbZip -DestinationPath $AbDir -Force
         $WrapperExe = (Get-ChildItem -Path $AbDir -Filter "*.exe" -Recurse | Select-Object -First 1).FullName
-        $asm = [System.Reflection.Assembly]::Load([System.IO.File]::ReadAllBytes($WrapperExe))
-        $rm = New-Object System.Resources.ResourceManager("MSIAfterburnerSetup.Properties.Resources", $asm)
-        $innerBytes = $rm.GetObject("MSIAfterburnerSetupFile")
-        $innerZip = "$AbDir\inner.zip"
-        [System.IO.File]::WriteAllBytes($innerZip, $innerBytes)
-        Expand-Archive -Path $innerZip -DestinationPath "$AbDir\real" -Force
-        $AbSetup = (Get-ChildItem -Path "$AbDir\real" -Filter "*.exe" | Select-Object -First 1).FullName
+        try {
+            $asm = [System.Reflection.Assembly]::Load([System.IO.File]::ReadAllBytes($WrapperExe))
+            $rm = New-Object System.Resources.ResourceManager("MSIAfterburnerSetup.Properties.Resources", $asm)
+            $innerBytes = $rm.GetObject("MSIAfterburnerSetupFile")
+            $rm.ReleaseAllResources()
+            if ($innerBytes) {
+                $innerZip = "$AbDir\inner.zip"
+                [System.IO.File]::WriteAllBytes($innerZip, $innerBytes)
+                Expand-Archive -Path $innerZip -DestinationPath "$AbDir\real" -Force
+                $AbSetup = (Get-ChildItem -Path "$AbDir\real" -Filter "*.exe" | Select-Object -First 1).FullName
+            } else {
+                $AbSetup = $WrapperExe
+            }
+        } catch {
+            $AbSetup = $WrapperExe
+        }
+        $dlTimer.Stop()
         Write-InstallerLog -Level "OK" -Action "Download" -Message "Дистрибутив успешно получен и распакован." -Timer $dlTimer
     } catch {
         Write-InstallerLog -Level "WARN" -Action "Download" -Message "Основной сервер MSI недоступен ($($_.Exception.Message)). Загрузка резервного релиза..."
         $AbSetup = "$env:TEMP\msiafterburner.exe"
         Invoke-WebRequest -Uri "https://github.com/FR33THYFR33THY/Ultimate/releases/download/Files/msiafterburner.exe" -OutFile $AbSetup -UseBasicParsing
+        $dlTimer.Stop()
         Write-InstallerLog -Level "OK" -Action "Download" -Message "Резервный дистрибутив загружен." -Timer $dlTimer
     }
 
     if (!$AbSetup -or !(Test-Path $AbSetup)) {
         Write-InstallerLog -Level "ERROR" -Action "Install" -Message "Не удалось получить установщик MSI Afterburner!"
+        Remove-Item -Path $AbZip, $AbDir, "$env:TEMP\msiafterburner.exe" -Recurse -Force -ErrorAction SilentlyContinue
         Pause
         exit
     }
@@ -178,11 +200,9 @@ if ($isMsiInstalled -and $isRtssInstalled) {
         foreach ($exe in $redistList) {
             Remove-Item -Path "$ifeo\$exe" -Recurse -Force -ErrorAction SilentlyContinue
         }
+        Remove-Item -Path $AbZip, $AbDir, "$env:TEMP\msiafterburner.exe" -Recurse -Force -ErrorAction SilentlyContinue
     }
     Write-InstallerLog -Level "OK" -Action "Install" -Message "Установка программных пакетов завершена."
-    Remove-Item -Path $AbZip -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path $AbDir -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "$env:TEMP\msiafterburner.exe" -Force -ErrorAction SilentlyContinue
 }
 
 # --- 4. СОХРАНЕНИЕ БЭКАПОВ ПЕРЕД НАСТРОЙКОЙ ---
@@ -646,9 +666,11 @@ Set-Content -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles
 
 # --- НАЧАЛО БЛОКА РАЗГОНА (RTX 5080) ---
 
-# 1. Записываем файл настроек видеокарты (Частоты, Курва, Лимиты)
+# 1. Записываем файл настроек видеокарты (Частоты, Курва, Лимиты — только для подтверждённой RTX 5080 DEV_2C02)
 $existingGpuCfg = Get-ChildItem -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\VEN_*.cfg" -ErrorAction SilentlyContinue | Select-Object -First 1
-$MyGpuFileName = if ($existingGpuCfg) { $existingGpuCfg.Name } else { "VEN_10DE&DEV_2C02&SUBSYS_176219DA&REV_A1&BUS_1&DEV_0&FN_0.cfg" }
+$has5080Cim = [bool](Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Where-Object { $_.PNPDeviceID -match "DEV_2C02" })
+$MyGpuFileName = if ($existingGpuCfg) { $existingGpuCfg.Name } elseif ($has5080Cim) { "VEN_10DE&DEV_2C02&SUBSYS_176219DA&REV_A1&BUS_1&DEV_0&FN_0.cfg" } else { $null }
+if ($MyGpuFileName -and $MyGpuFileName -match "DEV_2C02") {
 $MyGpuProfileContent = @"
 [Defaults]
 Format=2
@@ -708,6 +730,10 @@ ProfileContents=1
 "@
 Set-Content -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\Profile1.cfg" -Value $ProfileSlotContent -Force
 Set-Content -Path "$env:SystemDrive\Program Files (x86)\MSI Afterburner\Profiles\Profile2.cfg" -Value $ProfileSlotContent -Force
+Write-InstallerLog -Level "OK" -Action "GPU" -Message "Применена кривая RTX 5080 (DEV_2C02) в $MyGpuFileName."
+} else {
+    Write-InstallerLog -Level "INFO" -Action "GPU" -Message "Обнаружена не RTX 5080 (DEV_2C02) — пропуск кривой напряжения/разгона, частоты оставлены в стоке."
+}
 
 # --- КОНЕЦ БЛОКА ВНЕДРЕНИЯ РАЗГОНА ---
 
@@ -2354,7 +2380,7 @@ Size=70
 TextColor=11C511
 
 "@
-Set-Content -Path "$env:SystemDrive\Program Files (x86)\RivaTuner Statistics Server\Plugins\Client\Overlays\fr33thy.ovl" -Value $fr33thyovl -Force
+Set-Content -Path "$RtssClient\Overlays\fr33thy.ovl" -Value $fr33thyovl -Force
 
 # Создание desktopoverlayhost.cfg для RivaTuner
 $DesktopOverlayHostCfg = @"
@@ -2383,23 +2409,27 @@ Move-Item -Path "$env:AppData\Microsoft\Windows\Start Menu\Programs\MSI Afterbur
 Remove-Item "$env:AppData\Microsoft\Windows\Start Menu\Programs\MSI Afterburner" -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
 Remove-Item "$env:AppData\Microsoft\Windows\Start Menu\Programs\RivaTuner Statistics Server" -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
 
-# Применение киберспортивного профиля NVIDIA (RTX 5080 + 9800X3D)
-Write-Host "Применение киберспортивного профиля драйвера NVIDIA..." -ForegroundColor Yellow
-$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
-$npiDir = "$env:TEMP\npi"
-$npiExe = if (Test-Path "$scriptDir\tools\nvidiaProfileInspector.exe") { "$scriptDir\tools\nvidiaProfileInspector.exe" } elseif (Test-Path "$scriptDir\nvidiaProfileInspector.exe") { "$scriptDir\nvidiaProfileInspector.exe" } else { "$npiDir\nvidiaProfileInspector.exe" }
-$localNip = if (Test-Path "$scriptDir\tools\NV-Esports-Ultimate.nip") { "$scriptDir\tools\NV-Esports-Ultimate.nip" } elseif (Test-Path "$scriptDir\NV-Esports-Ultimate.nip") { "$scriptDir\NV-Esports-Ultimate.nip" } else { "$npiDir\NV-Esports-Ultimate.nip" }
-try {
-    if (-not (Test-Path $npiExe)) {
-        New-Item -Path $npiDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-        $npiZip = "$env:TEMP\nvidiaProfileInspector.zip"
-        Invoke-WebRequest -Uri "https://github.com/Orbmu2k/nvidiaProfileInspector/releases/download/2.4.0.4/nvidiaProfileInspector.zip" -OutFile $npiZip -UseBasicParsing -TimeoutSec 10
-        Expand-Archive -Path $npiZip -DestinationPath $npiDir -Force
-        Remove-Item $npiZip -Force -ErrorAction SilentlyContinue
-    }
-    if (Test-Path $npiExe) {
-        if (-not (Test-Path $localNip)) {
-            $nipXml = @"
+# Применение киберспортивного профиля NVIDIA (только при наличии NVIDIA GPU)
+$hasNvidiaGpu = [bool](Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Where-Object { $_.PNPDeviceID -match "VEN_10DE" })
+if ($hasNvidiaGpu) {
+    Write-InstallerLog -Level "INFO" -Action "NVIDIA" -Message "Применение киберспортивного профиля драйвера NVIDIA..."
+    $npiDir = "$env:TEMP\npi"
+    $npiExe = if (Test-Path "$script:ScriptDir\tools\nvidiaProfileInspector.exe") { "$script:ScriptDir\tools\nvidiaProfileInspector.exe" } elseif (Test-Path "$script:ScriptDir\nvidiaProfileInspector.exe") { "$script:ScriptDir\nvidiaProfileInspector.exe" } else { "$npiDir\nvidiaProfileInspector.exe" }
+    $localNip = if (Test-Path "$script:ScriptDir\tools\NV-Esports-Ultimate.nip") { "$script:ScriptDir\tools\NV-Esports-Ultimate.nip" } elseif (Test-Path "$script:ScriptDir\NV-Esports-Ultimate.nip") { "$script:ScriptDir\NV-Esports-Ultimate.nip" } else { "$npiDir\NV-Esports-Ultimate.nip" }
+    $npiDownloaded = $false
+    try {
+        if (-not (Test-Path $npiExe)) {
+            New-Item -Path $npiDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+            $npiZip = "$env:TEMP\nvidiaProfileInspector.zip"
+            Invoke-WebRequest -Uri "https://github.com/Orbmu2k/nvidiaProfileInspector/releases/download/2.4.0.4/nvidiaProfileInspector.zip" -OutFile $npiZip -UseBasicParsing -TimeoutSec 10
+            Expand-Archive -Path $npiZip -DestinationPath $npiDir -Force
+            Remove-Item $npiZip -Force -ErrorAction SilentlyContinue
+            $npiDownloaded = $true
+        }
+        if (Test-Path $npiExe) {
+            if (-not (Test-Path $localNip)) {
+                New-Item -Path $npiDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+                $nipXml = @"
 <?xml version="1.0" encoding="utf-16"?>
 <ArrayOfProfile>
   <Profile>
@@ -2445,14 +2475,22 @@ try {
   </Profile>
 </ArrayOfProfile>
 "@
-            $localNip = "$npiDir\NV-Esports-Ultimate.nip"
-            Set-Content -Path $localNip -Value $nipXml -Encoding Unicode -Force
+                $localNip = "$npiDir\NV-Esports-Ultimate.nip"
+                Set-Content -Path $localNip -Value $nipXml -Encoding Unicode -Force
+                $npiDownloaded = $true
+            }
+            Start-Process -FilePath $npiExe -ArgumentList @("`"$localNip`"", "-silent") -Wait -WindowStyle Hidden
+            Write-InstallerLog -Level "OK" -Action "NVIDIA" -Message "Профиль NVIDIA успешно применен (шейдерный кэш Unlimited, P-State 1, 16x AF, Threaded On)."
         }
-        Start-Process -FilePath $npiExe -ArgumentList @("`"$localNip`"", "-silent") -Wait -WindowStyle Hidden
-        Write-Host "      Профиль NVIDIA успешно применен (шейдерный кэш Unlimited, P-State 1, 16x AF, Threaded On)." -ForegroundColor Green
+    } catch {
+        Write-InstallerLog -Level "WARN" -Action "NVIDIA" -Message "Не удалось применить профиль NVIDIA: $($_.Exception.Message)"
+    } finally {
+        if ($npiDownloaded -and (Test-Path $npiDir)) {
+            Remove-Item -Path $npiDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
-} catch {
-    Write-Host "      Предупреждение: не удалось применить профиль NVIDIA: $($_.Exception.Message)" -ForegroundColor DarkGray
+} else {
+    Write-InstallerLog -Level "INFO" -Action "NVIDIA" -Message "NVIDIA GPU не обнаружена (AMD/Intel система) — пропуск профиля драйвера NVIDIA."
 }
 
 # --- 7. ЗАПУСК ПРОЦЕССОВ И АКТИВАЦИЯ ПРОФИЛЕЙ ---
@@ -2478,6 +2516,7 @@ while ($procWaitSw.ElapsedMilliseconds -lt 5000) {
     if ($msiProc -and $rtssProc) { break }
     Start-Sleep -Milliseconds 150
 }
+$procWaitSw.Stop()
 
 if ($msiProc) {
     Write-InstallerLog -Level "OK" -Action "Process" -Message "MSI Afterburner успешно запущен (PID: $($msiProc.Id))." -Timer $procWaitSw
@@ -2495,13 +2534,23 @@ if ($rtssProc) {
 Show-InstallerProgress -Step 8 -TotalSteps 8 -Activity "Финальная верификация параметров конфигураций"
 $vMsiCfg = "$MsiDir\Profiles\MSIAfterburner.cfg"
 $vRtssGlobal = "$RtssDir\Profiles\Global"
-$vRtssHotkey = "$RtssDir\Plugins\Client\HotkeyHandler.cfg"
+$vRtssHotkey = "$RtssClient\HotkeyHandler.cfg"
 
-$chkEnableServer = if (Test-Path $vMsiCfg) { (Get-Content $vMsiCfg | Select-String "^EnableServer\s*=\s*(\d+)").Matches[0].Groups[1].Value } else { "N/A" }
-$chkSingleTray   = if (Test-Path $vMsiCfg) { (Get-Content $vMsiCfg | Select-String "^SingleTrayIconMode\s*=\s*(\d+)").Matches[0].Groups[1].Value } else { "N/A" }
-$chkAbHotkey     = if (Test-Path $vMsiCfg) { (Get-Content $vMsiCfg | Select-String "^OSDToggleHotkey\s*=\s*([0-9a-fA-F]+)").Matches[0].Groups[1].Value } else { "N/A" }
-$chkEnableOSD    = if (Test-Path $vRtssGlobal) { (Get-Content $vRtssGlobal | Select-String "^EnableOSD\s*=\s*(\d+)").Matches[0].Groups[1].Value } else { "N/A" }
-$chkRtssHotkey   = if (Test-Path $vRtssHotkey) { (Get-Content $vRtssHotkey | Select-String "^OSDToggleHotkey\s*=\s*([0-9a-fA-F]+)").Matches[0].Groups[1].Value } else { "N/A" }
+$msiCfgRaw = if (Test-Path $vMsiCfg) { [System.IO.File]::ReadAllText($vMsiCfg) } else { "" }
+$rtssGlobalRaw = if (Test-Path $vRtssGlobal) { [System.IO.File]::ReadAllText($vRtssGlobal) } else { "" }
+$rtssHotkeyRaw = if (Test-Path $vRtssHotkey) { [System.IO.File]::ReadAllText($vRtssHotkey) } else { "" }
+
+$mEnableServer = [regex]::Match($msiCfgRaw, "(?m)^EnableServer\s*=\s*(\d+)")
+$mSingleTray   = [regex]::Match($msiCfgRaw, "(?m)^SingleTrayIconMode\s*=\s*(\d+)")
+$mAbHotkey     = [regex]::Match($msiCfgRaw, "(?m)^OSDToggleHotkey\s*=\s*([0-9a-fA-F]+)")
+$mEnableOSD    = [regex]::Match($rtssGlobalRaw, "(?m)^EnableOSD\s*=\s*(\d+)")
+$mRtssHotkey   = [regex]::Match($rtssHotkeyRaw, "(?m)^OSDToggleHotkey\s*=\s*([0-9a-fA-F]+)")
+
+$chkEnableServer = if ($mEnableServer.Success) { $mEnableServer.Groups[1].Value } else { "N/A" }
+$chkSingleTray   = if ($mSingleTray.Success)   { $mSingleTray.Groups[1].Value }   else { "N/A" }
+$chkAbHotkey     = if ($mAbHotkey.Success)     { $mAbHotkey.Groups[1].Value }     else { "N/A" }
+$chkEnableOSD    = if ($mEnableOSD.Success)    { $mEnableOSD.Groups[1].Value }    else { "N/A" }
+$chkRtssHotkey   = if ($mRtssHotkey.Success)   { $mRtssHotkey.Groups[1].Value }   else { "N/A" }
 
 Write-InstallerLog -Level "INFO" -Action "Verify" -Message "Параметры Afterburner: EnableServer=$chkEnableServer, SingleTrayIconMode=$chkSingleTray, Hotkey=$chkAbHotkey"
 Write-InstallerLog -Level "INFO" -Action "Verify" -Message "Параметры RTSS: EnableOSD=$chkEnableOSD, Hotkey=$chkRtssHotkey"

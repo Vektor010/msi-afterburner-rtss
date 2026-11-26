@@ -110,11 +110,12 @@ powershell -ExecutionPolicy Bypass -File .\Setup.ps1
 | **Назначение** | Шутеры (CS2, Apex, Valorant) | Стресс-тесты, бенчмарки | Чистый мониторинг |
 | **Визуальная загрузка экрана** | 5% (Компактный правый HUD) | 25% (Поядерный монитор) | Минимальная |
 | **Счетчик FPS и Frametime (мс)** | ✅ Да | ✅ Да | ✅ Да |
-| **1% Low и 0.1% Low FPS** | ✅ Да | ✅ Да | ⚙️ Опционально |
-| **Поядерный мониторинг CPU0..15** | ❌ Свернуто в общий CPU | ✅ Все ядра отдельно | ❌ Выключено |
+| **1% Low и 0.1% Low FPS** | ✅ Да (в графике/сводке) | ✅ Да | ✅ Да |
+| **Поядерный мониторинг CPU0..15** | ❌ Свернуто в общий CPU | ✅ Все ядра отдельно | ✅ Все ядра отдельно |
 | **Режим «Призрак» (Скрытый трей RTSS)** | ✅ Включен (`SingleTrayIconMode`) | ✅ Включен | ✅ Включен |
 | **Хоткей переключения OSD** | <kbd>Alt</kbd> + <kbd>1</kbd> | <kbd>Alt</kbd> + <kbd>1</kbd> | <kbd>Alt</kbd> + <kbd>1</kbd> |
-| **Влияние на частоты / вольтаж GPU** | 🔒 Безопасный профиль | ⚡ Андервольт RTX 5080 | 🛡️ Без разгона (Stock) |
+| **Влияние на частоты / вольтаж GPU** | ⚡ RTX 5080 (др. GPU — сток) | ⚡ RTX 5080 (др. GPU — сток) | 🛡️ Без разгона (Stock) |
+| **Профиль драйвера NVIDIA (NPI)** | ✅ Только на NVIDIA GPU | ✅ Только на NVIDIA GPU | 🛡️ Не изменяется |
 | **Совместимость с AMD и Intel** | ✅ Полная | ✅ Полная | ✅ Полная |
 
 ---
@@ -206,8 +207,15 @@ Test Group 3: Live Configuration Contracts
   [PASS] MSIAfterburner.cfg contains OSDToggleHotkey=00040031h
   [PASS] HotkeyHandler.cfg contains OSDToggleHotkey=00040031
 
+Test Group 4: PSScriptAnalyzer Error Checks
+  [PASS] PSScriptAnalyzer (0 Errors): MSI-Afterburner-Moi.ps1
+  [PASS] PSScriptAnalyzer (0 Errors): MSI-Afterburner-NextGen.ps1
+  [PASS] PSScriptAnalyzer (0 Errors): MSI-Afterburner-Standalone.ps1
+  [PASS] PSScriptAnalyzer (0 Errors): Setup.ps1
+  [PASS] PSScriptAnalyzer (0 Errors): Syntax.Tests.ps1
+
 ==================================================
-Test Results: Total: 14 | Passed: 14 | Failed: 0
+Test Results: Total: 19 | Passed: 19 | Failed: 0
 ==================================================
 ```
 
